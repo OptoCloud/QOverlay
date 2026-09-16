@@ -1,0 +1,33 @@
+{
+  "default_bindings": [
+    { "controller_type": "knuckles", "binding_url": "qoverlay_bindings_knuckles.json" },
+    { "controller_type": "oculus_touch", "binding_url": "qoverlay_bindings_oculus_touch.json" },
+    { "controller_type": "vive_controller", "binding_url": "qoverlay_bindings_vive_controller.json" },
+    { "controller_type": "holographic_controller", "binding_url": "qoverlay_bindings_holographic_controller.json" }
+  ],
+  "actions": [
+    { "name": "/actions/main/in/Click", "type": "boolean", "requirement": "mandatory" },
+    { "name": "/actions/main/in/Grab", "type": "boolean", "requirement": "optional" },
+    { "name": "/actions/main/in/TriggerValue", "type": "vector1", "requirement": "optional" },
+    { "name": "/actions/main/in/GripValue", "type": "vector1", "requirement": "optional" },
+    { "name": "/actions/main/in/Pointer", "type": "pose", "requirement": "optional" },
+    { "name": "/actions/main/in/Thumbstick", "type": "vector2", "requirement": "optional" },
+    { "name": "/actions/main/out/Haptic", "type": "vibration" }
+  ],
+  "action_sets": [
+    { "name": "/actions/main", "usage": "leftright" }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_US",
+      "/actions/main": "QOverlay",
+      "/actions/main/in/Click": "Click / press UI button",
+      "/actions/main/in/Grab": "Grab / move overlay",
+      "/actions/main/in/TriggerValue": "Trigger pull (analog)",
+      "/actions/main/in/GripValue": "Grip force (analog)",
+      "/actions/main/in/Pointer": "Aim / pointing pose",
+      "/actions/main/in/Thumbstick": "Move grabbed overlay closer / farther",
+      "/actions/main/out/Haptic": "Haptic feedback"
+    }
+  ]
+}

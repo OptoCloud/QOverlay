@@ -1,0 +1,49 @@
+{
+  "controller_type": "holographic_controller",
+  "description": "QOverlay default bindings for Windows Mixed Reality controllers",
+  "name": "QOverlay default WMR bindings",
+  "bindings": {
+    "/actions/main": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "trigger",
+          "inputs": { "click": { "output": "/actions/main/in/Click" }, "pull": { "output": "/actions/main/in/TriggerValue" } }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "trigger",
+          "inputs": { "click": { "output": "/actions/main/in/Click" }, "pull": { "output": "/actions/main/in/TriggerValue" } }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "inputs": { "click": { "output": "/actions/main/in/Grab" } }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": { "click": { "output": "/actions/main/in/Grab" } }
+        },
+        {
+          "path": "/user/hand/left/input/joystick",
+          "mode": "joystick",
+          "inputs": { "position": { "output": "/actions/main/in/Thumbstick" } }
+        },
+        {
+          "path": "/user/hand/right/input/joystick",
+          "mode": "joystick",
+          "inputs": { "position": { "output": "/actions/main/in/Thumbstick" } }
+        }
+      ],
+      "haptics": [
+        { "path": "/user/hand/left/output/haptic", "output": "/actions/main/out/Haptic" },
+        { "path": "/user/hand/right/output/haptic", "output": "/actions/main/out/Haptic" }
+      ],
+      "poses": [
+        { "output": "/actions/main/in/Pointer", "path": "/user/hand/left/pose/tip" },
+        { "output": "/actions/main/in/Pointer", "path": "/user/hand/right/pose/tip" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+.vs/
+.idea/
+out/
+CMakeLists.txt.user
+
+# Local development
+*.local
+.claude/settings.local.json
+# Planning doc - not tracked (README/LICENSE/docs/ excepted)
+PLAN.md

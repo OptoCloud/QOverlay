@@ -1,0 +1,18 @@
+{
+  "applications": [
+    {
+      "app_key": "qoverlay.overlay",
+      "launch_type": "binary",
+      "binary_path_windows": "QOverlay.exe",
+      "binary_path_linux": "QOverlay",
+      "is_dashboard_overlay": false,
+      "action_manifest_path": "bindings/qoverlay_actions.json",
+      "strings": {
+        "en_US": {
+          "name": "QOverlay",
+          "description": "Open source overlay application"
+        }
+      }
+    }
+  ]
+}
