@@ -24,14 +24,14 @@ vr::VRInputValueHandle_t s_leftHand = vr::k_ulInvalidInputValueHandle;
 vr::VRInputValueHandle_t s_rightHand = vr::k_ulInvalidInputValueHandle;
 }
 
-bool QOverlay::VR::Input::Initialize() {
+bool QOverlay::VR::Input::Initialize(const std::string& actionsRelativePath) {
 	auto input = vr::VRInput();
 	if (input == nullptr) {
 		fmt::print("Failed to get IVRInput interface\n");
 		return false;
 	}
 
-	const QString manifestPath = QDir(QCoreApplication::applicationDirPath()).filePath("bindings/qoverlay_actions.json");
+	const QString manifestPath = QDir(QCoreApplication::applicationDirPath()).filePath(QString::fromStdString(actionsRelativePath));
 	if (const vr::EVRInputError error = input->SetActionManifestPath(manifestPath.toUtf8().constData()); error != vr::VRInputError_None) {
 		fmt::print("Failed to set action manifest path ({}): error {}\n", manifestPath.toStdString(), static_cast<int>(error));
 		return false;

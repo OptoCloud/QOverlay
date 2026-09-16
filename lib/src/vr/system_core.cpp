@@ -12,9 +12,6 @@
 
 vr::IVRSystem* s_vrSystem;
 
-// App key must match the one declared in qoverlay.vrmanifest.
-static constexpr const char* kAppKey = "qoverlay.overlay";
-
 // Registers the application manifest with SteamVR and identifies this running
 // process against it. This gives the app a stable app key so its actions show up
 // (with a persistent, per-app binding set) in the SteamVR controller binding UI.
@@ -27,7 +24,7 @@ static std::string JsonPath(const QString& path) {
 	return native.toStdString();
 }
 
-static void RegisterApplicationManifest() {
+static void RegisterApplicationManifest(const QOverlay::VR::AppIdentity& identity) {
 	auto apps = vr::VRApplications();
 	if (apps == nullptr) {
 		LOG_ERROR("Failed to get IVRApplications interface");
@@ -43,7 +40,7 @@ static void RegisterApplicationManifest() {
 	// matches the running process image fixes both.
 	const QString appDir = QCoreApplication::applicationDirPath();
 	const std::string exePath = JsonPath(QCoreApplication::applicationFilePath());
-	const std::string actionsPath = JsonPath(QDir(appDir).filePath("bindings/qoverlay_actions.json"));
+	const std::string actionsPath = JsonPath(QDir(appDir).filePath(QString::fromStdString(identity.actionsRelativePath)));
 
 	const std::string json = fmt::format(
 		"{{\n"
@@ -54,13 +51,13 @@ static void RegisterApplicationManifest() {
 		"      \"binary_path_windows\": \"{}\",\n"
 		"      \"is_dashboard_overlay\": false,\n"
 		"      \"action_manifest_path\": \"{}\",\n"
-		"      \"strings\": {{ \"en_US\": {{ \"name\": \"QOverlay\", \"description\": \"Open source overlay application\" }} }}\n"
+		"      \"strings\": {{ \"en_US\": {{ \"name\": \"{}\", \"description\": \"Open source overlay application\" }} }}\n"
 		"    }}\n"
 		"  ]\n"
 		"}}\n",
-		kAppKey, exePath, actionsPath);
+		identity.appKey, exePath, actionsPath, identity.appName);
 
-	const QString genPath = QDir(appDir).filePath("qoverlay.generated.vrmanifest");
+	const QString genPath = QDir(appDir).filePath(QStringLiteral("qoverlaylib.generated.vrmanifest"));
 	{
 		QFile file(genPath);
 		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -75,18 +72,18 @@ static void RegisterApplicationManifest() {
 		LOG_WARN("Failed to add application manifest: {}", apps->GetApplicationsErrorNameFromEnum(error));
 	}
 
-	if (!apps->IsApplicationInstalled(kAppKey)) {
-		LOG_WARN("'{}' not reported installed after AddApplicationManifest", kAppKey);
+	if (!apps->IsApplicationInstalled(identity.appKey.c_str())) {
+		LOG_WARN("'{}' not reported installed after AddApplicationManifest", identity.appKey);
 	}
 
-	if (const vr::EVRApplicationError error = apps->IdentifyApplication(static_cast<std::uint32_t>(QCoreApplication::applicationPid()), kAppKey); error != vr::VRApplicationError_None) {
+	if (const vr::EVRApplicationError error = apps->IdentifyApplication(static_cast<std::uint32_t>(QCoreApplication::applicationPid()), identity.appKey.c_str()); error != vr::VRApplicationError_None) {
 		LOG_WARN("Failed to identify application: {}", apps->GetApplicationsErrorNameFromEnum(error));
 	} else {
-		LOG_INFO("Identified application as '{}'", kAppKey);
+		LOG_INFO("Identified application as '{}'", identity.appKey);
 	}
 }
 
-bool QOverlay::VR::VRSystem::Initialize() {
+bool QOverlay::VR::VRSystem::Initialize(const AppIdentity& identity) {
 	vr::EVRInitError error;
 	s_vrSystem = vr::VR_Init(&error, vr::VRApplication_Overlay);
 	if (error != vr::VRInitError_None) {
@@ -94,9 +91,9 @@ bool QOverlay::VR::VRSystem::Initialize() {
 		return false;
 	}
 
-	RegisterApplicationManifest();
+	RegisterApplicationManifest(identity);
 
-	if (!Input::Initialize()) {
+	if (!Input::Initialize(identity.actionsRelativePath)) {
 		// Non-fatal: the overlay still renders, but controller interaction/haptics
 		// won't work until the action manifest loads correctly.
 		LOG_WARN("VR input initialization failed; controller interaction disabled");

@@ -2,6 +2,7 @@
 
 #include <openvr.h>
 #include <cstdint>
+#include <string>
 
 namespace QOverlay::VR {
 // Wraps SteamVR's action-based input system (IVRInput). All controller input and
@@ -11,8 +12,10 @@ struct Input {
 	enum class Hand : std::uint8_t { Left, Right };
 
 	// Loads the action manifest and resolves action/handle references. Call once
-	// after VR_Init. Returns false if the input system is unavailable.
-	static bool Initialize();
+	// after VR_Init. `actionsRelativePath` is resolved against the executable's own
+	// directory (see AppIdentity in system.h - VRSystem::Initialize passes its
+	// identity's path through here). Returns false if the input system is unavailable.
+	static bool Initialize(const std::string& actionsRelativePath = "bindings/qoverlay_actions.json");
 
 	// Pumps the active action set for the current frame. Must be called once per
 	// frame before reading any action state.
