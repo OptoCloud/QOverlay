@@ -4,6 +4,7 @@
 
 #include <QCoreApplication>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
@@ -409,6 +410,18 @@ bool QOverlay::VR::QmlOverlayScene::FireMouseEvent(int hand, Qt::MouseButton but
 	// low-frequency press/release transitions as a guaranteed backstop for that visual change.
 	if (type != QEvent::MouseMove) requestRender();
 	return true;
+}
+
+void QOverlay::VR::QmlOverlayScene::FireScroll(int /*hand*/, const glm::vec2& pos, int notches) {
+	if (!Ok() || notches == 0) return;
+
+	// Deliver a wheel event to whatever QML is under the pointer (e.g. a Flickable list). One
+	// notch == 120 units in angleDelta, matching a physical wheel detent.
+	const QPointF local(pos.x, pos.y);
+	QWheelEvent event(local, local, QPoint(0, 0), QPoint(0, notches * 120),
+	                  Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+	QCoreApplication::sendEvent(m_quickWindow.get(), &event);
+	requestRender();
 }
 
 void QOverlay::VR::QmlOverlayScene::MouseNotPresent(int hand) {

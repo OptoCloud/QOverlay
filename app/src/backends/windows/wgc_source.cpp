@@ -220,9 +220,21 @@ void WgcSource::injectMouse(Qt::MouseButton button, const QPointF& overlayPixel)
 	// VR-pointer jitter.
 	constexpr double kDragThreshold = 16.0;
 
-	// A fresh press: anchor here and start as a click (not yet dragging).
+	// A fresh press: anchor here and start as a click (not yet dragging). If this press lands
+	// soon after and near the previous one, snap to that exact anchor so the two down-events
+	// share one pixel and register as a double-click despite VR-pointer jitter between them.
 	if (button != Qt::NoButton && m_heldButton == Qt::NoButton) {
-		m_pressAnchor = overlayPixel;
+		const unsigned long long now = GetTickCount64();
+		const double ddx = overlayPixel.x() - m_lastPressAnchor.x();
+		const double ddy = overlayPixel.y() - m_lastPressAnchor.y();
+		const bool nearLast = (ddx * ddx + ddy * ddy) < (kDragThreshold * kDragThreshold);
+		if (m_lastPressTick != 0 && now - m_lastPressTick <= GetDoubleClickTime() && nearLast) {
+			m_pressAnchor = m_lastPressAnchor;   // snap onto the first click's pixel
+		} else {
+			m_pressAnchor = overlayPixel;
+		}
+		m_lastPressAnchor = m_pressAnchor;
+		m_lastPressTick = now;
 		m_dragging = false;
 		emit interacted(); // focus-follow: this target now receives keyboard input
 	}
@@ -288,6 +300,29 @@ void WgcSource::injectMouse(Qt::MouseButton button, const QPointF& overlayPixel)
 
 	m_lastWndTarget = target;
 	m_lastWndLParam = lparam;
+}
+
+void WgcSource::injectScroll(int notches, const QPointF& overlayPixel) {
+	if (notches == 0) return;
+
+	int x = 0, y = 0;
+	if (!overlayPixelToDesktop(overlayPixel, x, y)) return;
+
+	if (m_kind == CaptureSurface::Kind::Monitor) {
+		// Screen space is real here — move the global cursor to the point and send a real wheel,
+		// which the OS routes to whatever is under it (exactly what the mirror shows).
+		Input::MoveCursor(x, y);
+		Input::Scroll(notches);
+		return;
+	}
+
+	// Window overlay: post the wheel straight to the control under the pointer so it scrolls
+	// regardless of desktop occlusion. WM_MOUSEWHEEL's lParam is in SCREEN coordinates.
+	const POINT screenPt{ x, y };
+	HWND target = DeepChildAt(m_window, screenPt);
+	const WPARAM wparam = MAKEWPARAM(0, static_cast<short>(notches * WHEEL_DELTA));
+	const LPARAM lparam = MAKELPARAM(screenPt.x, screenPt.y);
+	PostMessageW(target, WM_MOUSEWHEEL, wparam, lparam);
 }
 
 void WgcSource::mouseGone() {

@@ -38,6 +38,12 @@ QImage WgcBackend::grabThumbnail(const QString& surfaceId, int maxDim) {
 	return GrabThumbnail(*target, maxDim);
 }
 
+QImage WgcBackend::grabIcon(const QString& surfaceId, int maxDim) {
+	const CaptureTarget* target = find(surfaceId);
+	if (target == nullptr) return {};
+	return GrabIcon(*target, maxDim);
+}
+
 QOverlay::Capture::ICaptureSource* WgcBackend::createSource(const QString& surfaceId, QObject* parent) {
 	const CaptureTarget* target = find(surfaceId);
 	if (target == nullptr) {

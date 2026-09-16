@@ -23,7 +23,8 @@ struct CaptureSurface {
 	enum class Kind { Monitor, Window };
 
 	QString id;
-	QString title;
+	QString title;    // window title / monitor label
+	QString appName;  // owning application (exe/product) for windows; empty for monitors
 	Kind kind = Kind::Monitor;
 
 	QString kindString() const { return kind == Kind::Monitor ? QStringLiteral("monitor") : QStringLiteral("window"); }
@@ -53,6 +54,10 @@ public:
 	virtual void injectMouse(Qt::MouseButton button, const QPointF& overlayPixel) = 0;
 	virtual void mouseGone() = 0;
 
+	// Wheel-scroll the target at an overlay-space pixel by `notches` detents (+up / -down).
+	// Default no-op so backends that don't yet support scrolling need no change.
+	virtual void injectScroll(int notches, const QPointF& overlayPixel) { Q_UNUSED(notches); Q_UNUSED(overlayPixel); }
+
 	// Keyboard injection into this source's target (from the virtual keyboard). Printable
 	// input arrives as Unicode text; non-printable keys (Enter, Backspace, arrows, …) as
 	// key up/down events.
@@ -81,6 +86,10 @@ public:
 	// One-shot preview of a surface (from the most recent enumeration), scaled so its
 	// longest side is `maxDim`. Null image on failure.
 	virtual QImage grabThumbnail(const QString& surfaceId, int maxDim) = 0;
+
+	// The surface's application icon (window/exe icon), at most `maxDim` px. Default null so
+	// backends without icon support need no change; the UI falls back to a generic glyph.
+	virtual QImage grabIcon(const QString& surfaceId, int maxDim) { Q_UNUSED(surfaceId); Q_UNUSED(maxDim); return {}; }
 
 	// Start a live source for `surfaceId`. Returns nullptr on failure; the caller owns it.
 	virtual ICaptureSource* createSource(const QString& surfaceId, QObject* parent = nullptr) = 0;

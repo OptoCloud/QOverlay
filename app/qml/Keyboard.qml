@@ -30,7 +30,12 @@ Rectangle {
     border.color: "#252b36"
     border.width: 1
 
-    property bool shifted: false
+    // Caps is a real lock (persists until tapped again); Shift is one-shot — it arms for the
+    // next key and auto-releases after it, matching a physical keyboard's "type one capital".
+    // `shifted` (the effective shift used for legends/output) is either of them being active.
+    property bool capsLock: false
+    property bool shiftOneShot: false
+    readonly property bool shifted: capsLock || shiftOneShot
 
     readonly property bool kbIso: (windowManager && windowManager.keyboardLegends
                                    && windowManager.keyboardLegends.iso === true)
@@ -73,7 +78,8 @@ Rectangle {
             var d = { x:x, y:y, w:w, h:(o&&o.h)||1, cap:cap, mod:true }
             if (o) {
                 if (o.key !== undefined) d.key = o.key
-                if (o.toggle) d.toggle = true
+                if (o.caps) d.caps = true      // Caps Lock (persistent latch)
+                if (o.shift) d.shift = true    // Shift (one-shot; auto-releases after next key)
                 if (o.space) d.space = true
                 if (o.enter) d.enter = true    // ISO boot-shaped Enter (custom outline)
                 if (o.icon) d.icon = o.icon    // custom glyph (e.g. "win")
@@ -113,18 +119,18 @@ Rectangle {
         mk(r2, 2, 1, "PgDn", {key:Qt.Key_PageDown})
 
         // Home row + Enter.
-        mk(0, 3, 1.75, "Caps", {toggle:true})
+        mk(0, 3, 1.75, "Caps", {caps:true})
         var hm = ["30","31","32","33","34","35","36","37","38","39","40"]
         for (var h = 0; h < 11; ++h) ch(1.75 + h, 3, hm[h])
         if (iso) ch(12.75, 3, "43", 1.0)                             // ISO ' fills under the Enter's top arm
         else     mk(12.75, 3, 2.25, "⏎", {key:Qt.Key_Return})        // ANSI Enter
 
         // Bottom row + up arrow.
-        if (iso) { mk(0, 4, 1.25, "⇧ Shift", {toggle:true, emph:true}); ch(1.25, 4, "86") }  // LShift + <>|
-        else     { mk(0, 4, 2.25, "⇧ Shift", {toggle:true, emph:true}) }
+        if (iso) { mk(0, 4, 1.25, "⇧ Shift", {shift:true, emph:true}); ch(1.25, 4, "86") }  // LShift + <>|
+        else     { mk(0, 4, 2.25, "⇧ Shift", {shift:true, emph:true}) }
         var bt = ["44","45","46","47","48","49","50","51","52","53"]
         for (var b = 0; b < 10; ++b) ch(2.25 + b, 4, bt[b])
-        mk(12.25, 4, 2.75, "⇧ Shift", {toggle:true, emph:true})
+        mk(12.25, 4, 2.75, "⇧ Shift", {shift:true, emph:true})
         mk(r1, 4, 1, "↑", {key:Qt.Key_Up, arrow:true})               // above ↓ → inverted-T
 
         // Modifier row + arrows.
@@ -147,13 +153,18 @@ Rectangle {
 
     function activate(kd) {
         if (!windowManager || !kd) return
-        if (kd.toggle) { root.shifted = !root.shifted; return }
+        if (kd.caps)  { root.capsLock = !root.capsLock; return }
+        if (kd.shift) { root.shiftOneShot = !root.shiftOneShot; return }
+        // Any other key consumes a one-shot Shift (Caps stays latched). Captured in `wasShifted`
+        // before we clear it, so this keypress still uses the armed shift.
+        var wasShifted = root.shifted
+        root.shiftOneShot = false
         // System keys (Windows key) must go to the OS globally — posting them to a captured
         // window does nothing (the shell opens Start from a global input, not a window message).
         if (kd.system && kd.key !== undefined) { windowManager.sendSystemKey(kd.key); return }
         if (kd.key !== undefined) { windowManager.sendKey(kd.key, true); windowManager.sendKey(kd.key, false); return }
         if (kd.space) { windowManager.sendText(" "); return }
-        if (kd.sc !== undefined) { var lg = root.legendFor(kd.sc); windowManager.sendText(root.shifted ? lg.s : lg.n); return }
+        if (kd.sc !== undefined) { var lg = root.legendFor(kd.sc); windowManager.sendText(wasShifted ? lg.s : lg.n); return }
     }
 
     Text {
@@ -186,7 +197,8 @@ Rectangle {
                 readonly property bool isEnter: !!modelData && modelData.enter === true
                 readonly property bool isWin: !!modelData && modelData.icon === "win"
                 readonly property var legend: (!!modelData && modelData.sc !== undefined) ? root.legendFor(modelData.sc) : null
-                readonly property bool isToggleOn: !!modelData && modelData.toggle === true && root.shifted
+                readonly property bool isToggleOn: !!modelData && ((modelData.caps === true && root.capsLock)
+                                                                   || (modelData.shift === true && root.shiftOneShot))
 
                 // Width of the Enter's bottom-left notch, in this item's local px (0.25u).
                 readonly property real notch: 0.25 * root.colPitch

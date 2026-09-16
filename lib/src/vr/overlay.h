@@ -62,10 +62,25 @@ public:
 	void AttachToDevice(TrackedDevice::DeviceType deviceType, const Transform& offset);
 	void MirrorToDevice(TrackedDevice::DeviceType deviceType);
 
+	// Re-level the overlay: keep its yaw + position but zero pitch/roll so it stands upright.
+	// Called each tick while the "pitch level" option is on. No-op if it faces straight up/down.
+	void LevelPitch();
+
+	// Lock the overlay to follow a tracked device (head/controller), computing the offset from
+	// its current world pose so it doesn't jump. Unlock() drops it back into world space where
+	// it currently sits. IsLocked() reflects device attachment.
+	void LockToDevice(TrackedDevice::DeviceType deviceType);
+	void Unlock();
+	bool IsLocked() const { return m_attachedDevice != vr::k_unTrackedDeviceIndexInvalid; }
+
 	// Dim the overlay while it's grabbed (on) / restore it (off). The move/resize symbol
 	// chip is a single shared overlay driven by the raycaster (see GrabIndicator).
 	void SetGrabHighlight(bool on);
 	float Opacity() const { return m_opacity; }
+
+	// Compositor render order among overlapping overlays — higher draws on top. Regular
+	// content overlays are 0; the grab chip is 200 and the pointer cursor 300 (PointerCursor).
+	void SetSortOrder(uint32_t order);
 
 public slots:
 	void SetVisible(bool visible);
@@ -94,5 +109,8 @@ private:
 	bool m_grabbed = false;
 	glm::mat4 m_grabOffset;
 	vr::TrackedDeviceIndex_t m_savedAttachedDevice = vr::k_unTrackedDeviceIndexInvalid;
+	// Drag-smoothing EMA state: last emitted pose while grabbing (Config::DragSmoothing).
+	glm::mat4 m_smoothedGrab = glm::mat4(1.0f);
+	bool m_hasSmoothedGrab = false;
 };
 }

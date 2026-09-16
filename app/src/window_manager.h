@@ -52,7 +52,15 @@ public:
 
 	// Per-overlay control-bar actions (called from OverlayControls).
 	void setOverlayOpacity(const QString& id, float alpha);
-	void retargetOverlay(const QString& id); // cycle to the next available surface
+	void retargetOverlay(const QString& id);                                 // cycle to the next available surface
+	void retargetOverlayTo(const QString& id, const QString& surfaceId);     // retarget to a chosen surface
+	void setOverlayPitchLevel(const QString& id, bool level);                // keep the overlay upright
+	void setOverlayLock(const QString& id, const QString& target);           // off / left / right / head
+
+	// Shared popup: toggle it to this overlay's Options/Sources panel (re-teleports + rebinds if
+	// it was showing for another overlay), or hide it. Called from the control-bar buttons.
+	void togglePopup(const QString& id, const QString& panel);
+	void hidePopup();
 
 	// Route virtual-keyboard input to the focused capture overlay (the last one clicked).
 	// `qtKey` is a Qt::Key value; text is Unicode printable input.
@@ -80,6 +88,7 @@ private:
 	struct AvailSurface {
 		Capture::CaptureSurface surface;
 		QString preview; // base64 PNG data URI, or empty if the grab failed
+		QString icon;    // base64 PNG app-icon data URI, or empty (windows only)
 	};
 
 	struct Active {
@@ -93,6 +102,8 @@ private:
 		VR::Overlay* bar = nullptr;                  // control-bar overlay under this one
 		OverlayControls* controls = nullptr;         // owned by `bar`
 		float opacity = 1.0f;
+		bool pitchLevel = false;                     // keep upright (re-leveled each tick)
+		QString lockTarget = QStringLiteral("off");  // off / left / right / head
 	};
 
 	// The actual work behind addSurface/retargetOverlay, run deferred (QTimer::singleShot 0)
@@ -100,15 +111,20 @@ private:
 	// (which crashes Qt — exceptions/reentrancy through QML event delivery).
 	void spawnSurface(const QString& id);
 	void retargetNow(const QString& id);
+	// Shared source-swap for an already-resolved active overlay + available surface index.
+	void applyRetarget(Active& active, int availableIndex);
 
 	void placeOverlay(VR::Overlay* overlay, int slot);
 	void positionBar(const Active& active);          // place the bar under the overlay
+	void positionPopup(const Active& active);        // place the shared popup in front of the overlay
 	void destroyActive(Active& active);              // tear down overlay + bar
 
 	Capture::ICaptureBackend* m_backend = nullptr;
 	std::vector<AvailSurface> m_available;
 	std::vector<Active> m_active;
 	Capture::ICaptureSource* m_focused = nullptr; // keyboard target (last-clicked overlay)
+	QString m_popupOwnerId;                       // active overlay the shared popup serves ("" = hidden)
+	QString m_popupPanel;                         // "options" or "sources"
 	QVariantMap m_keyboardLegends;
 	quint64 m_lastLayoutToken = 0; // last-seen OS layout, for auto-refreshing legends on change
 	int m_nextId = 0;

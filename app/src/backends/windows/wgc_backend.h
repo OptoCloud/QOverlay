@@ -18,6 +18,7 @@ public:
 	QString name() const override { return QStringLiteral("Windows.Graphics.Capture"); }
 	QList<CaptureSurface> enumerateSurfaces() override;
 	QImage grabThumbnail(const QString& surfaceId, int maxDim) override;
+	QImage grabIcon(const QString& surfaceId, int maxDim) override;
 	ICaptureSource* createSource(const QString& surfaceId, QObject* parent) override;
 
 private:

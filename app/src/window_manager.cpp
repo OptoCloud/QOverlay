@@ -3,8 +3,10 @@
 #include "capture/backend_factory.h"
 #include "log.h"
 #include "overlay_controls.h"
+#include "vr/conversion.h"
 #include "vr/overlay.h"
 #include "vr/capture_overlay_scene.h"
+#include "vr/popup_overlay.h"
 #include "vr/transform.h"
 
 #include <QBuffer>
@@ -86,8 +88,11 @@ QVariantList QOverlay::WindowManager::availableSurfaces() const {
 		QVariantMap map;
 		map["id"] = item.surface.id;
 		map["title"] = item.surface.title;
+		// Primary label: the app name, falling back to the title when unknown (e.g. monitors).
+		map["app"] = item.surface.appName.isEmpty() ? item.surface.title : item.surface.appName;
 		map["kind"] = KindString(item.surface.kind);
 		map["preview"] = item.preview;
+		map["icon"] = item.icon;
 		list.append(map);
 	}
 	return list;
@@ -109,7 +114,11 @@ void QOverlay::WindowManager::refresh() { Guarded("refresh", [&]() {
 	m_available.clear();
 	if (m_backend != nullptr) {
 		for (const auto& surface : m_backend->enumerateSurfaces()) {
-			m_available.push_back(AvailSurface{ surface, ToDataUri(m_backend->grabThumbnail(surface.id, 360)) });
+			m_available.push_back(AvailSurface{
+				surface,
+				ToDataUri(m_backend->grabThumbnail(surface.id, 360)),
+				ToDataUri(m_backend->grabIcon(surface.id, 64)),
+			});
 		}
 	}
 	emit availableSurfacesChanged();
@@ -167,7 +176,11 @@ void QOverlay::WindowManager::spawnSurface(const QString& id) { Guarded("spawnSu
 	if (bar->Ok()) {
 		controls->setParent(bar);        // lifetime tied to the bar
 		bar->SetGrabbable(false);        // it follows the overlay; not independently grabbable
+		// Render the bar (and its upward drop-ups) above the capture overlays it overlaps, but
+		// still below the grab chip (200) and pointer cursor (300).
+		bar->SetSortOrder(100);
 		bar->SetContextProperty("ctl", controls);
+		bar->SetContextProperty("windowManager", this); // for the Sources drop-up's live surface list
 		bar->SetSource(QUrl::fromLocalFile(QDir(QCoreApplication::applicationDirPath()).filePath("qml/ControlBar.qml")));
 		bar->SetWidth(0.5f);
 		bar->SetVisible(true);
@@ -184,6 +197,12 @@ void QOverlay::WindowManager::spawnSurface(const QString& id) { Guarded("spawnSu
 
 void QOverlay::WindowManager::destroyActive(Active& active) {
 	if (m_focused == active.source) m_focused = nullptr;
+	// If the shared popup is serving this overlay, hide it before the overlay goes away.
+	if (m_popupOwnerId == active.id) {
+		m_popupOwnerId.clear();
+		m_popupPanel.clear();
+		VR::PopupOverlay::Instance().Hide();
+	}
 	// Deferred delete: closeOverlay/closeAll can be triggered from a control-bar click while
 	// we're mid-frame inside the raycaster's FireMouseEvent. Deleting synchronously frees an
 	// overlay the raycaster still references this frame (use-after-free). deleteLater tears
@@ -223,6 +242,69 @@ void QOverlay::WindowManager::setOverlayOpacity(const QString& id, float alpha) 
 	it->overlay->SetOpacity(it->opacity);
 }); }
 
+void QOverlay::WindowManager::togglePopup(const QString& id, const QString& panel) {
+	// Called from a QML (bar) click. Creating/showing the popup builds a QQuickWindow + GL
+	// context on first use, which crashes if done inside QML event delivery — defer like
+	// addSurface. Toggling closed is just a Hide, but defer uniformly for simplicity.
+	QTimer::singleShot(0, this, [this, id, panel]() { Guarded("togglePopup", [&]() {
+	// Same overlay + same panel already open → toggle it closed.
+	if (m_popupOwnerId == id && m_popupPanel == panel) { hidePopup(); return; }
+
+	const auto it = std::find_if(m_active.begin(), m_active.end(),
+		[&](const Active& a) { return a.id == id; });
+	if (it == m_active.end() || it->controls == nullptr) return;
+
+	// Clear the highlight on whoever had it before (if it was a different overlay).
+	if (!m_popupOwnerId.isEmpty() && m_popupOwnerId != id) {
+		const auto prev = std::find_if(m_active.begin(), m_active.end(),
+			[&](const Active& a) { return a.id == m_popupOwnerId; });
+		if (prev != m_active.end() && prev->controls != nullptr) prev->controls->setOpenPanel(QString());
+	}
+
+	const auto which = (panel == QStringLiteral("sources"))
+		? VR::SwitchablePopupScene::Sources : VR::SwitchablePopupScene::Options;
+
+	m_popupOwnerId = id;
+	m_popupPanel = panel;
+	it->controls->setOpenPanel(panel);
+
+	// Show it, then position it in front of the overlay (positionPopup reads m_popupOwnerId).
+	VR::PopupOverlay::Instance().Show(it->controls, this, which, glm::mat4(1.0f), 0.55f);
+	positionPopup(*it);
+	}); });
+}
+
+void QOverlay::WindowManager::hidePopup() { Guarded("hidePopup", [&]() {
+	if (m_popupOwnerId.isEmpty()) { VR::PopupOverlay::Instance().Hide(); return; }
+	const auto it = std::find_if(m_active.begin(), m_active.end(),
+		[&](const Active& a) { return a.id == m_popupOwnerId; });
+	if (it != m_active.end() && it->controls != nullptr) it->controls->setOpenPanel(QString());
+	m_popupOwnerId.clear();
+	m_popupPanel.clear();
+	VR::PopupOverlay::Instance().Hide();
+}); }
+
+void QOverlay::WindowManager::setOverlayPitchLevel(const QString& id, bool level) { Guarded("setOverlayPitchLevel", [&]() {
+	const auto it = std::find_if(m_active.begin(), m_active.end(),
+		[&](const Active& a) { return a.id == id; });
+	if (it == m_active.end()) return;
+	it->pitchLevel = level;
+	if (level && it->overlay != nullptr && !it->overlay->IsGrabbed()) it->overlay->LevelPitch();
+}); }
+
+void QOverlay::WindowManager::setOverlayLock(const QString& id, const QString& target) { Guarded("setOverlayLock", [&]() {
+	const auto it = std::find_if(m_active.begin(), m_active.end(),
+		[&](const Active& a) { return a.id == id; });
+	if (it == m_active.end() || it->overlay == nullptr) return;
+	it->lockTarget = target;
+
+	using DeviceType = VR::TrackedDevice::DeviceType;
+	if (target == QStringLiteral("left"))       it->overlay->LockToDevice(DeviceType::ControllerLeft);
+	else if (target == QStringLiteral("right")) it->overlay->LockToDevice(DeviceType::ControllerRight);
+	else if (target == QStringLiteral("head"))  it->overlay->LockToDevice(DeviceType::HMD);
+	else                                        it->overlay->Unlock();
+}); }
+
 void QOverlay::WindowManager::retargetOverlay(const QString& id) {
 	// Also called from a QML (control-bar) click; defer to stay out of QML event delivery.
 	QTimer::singleShot(0, this, [this, id]() { retargetNow(id); });
@@ -238,7 +320,31 @@ void QOverlay::WindowManager::retargetNow(const QString& id) { Guarded("retarget
 	for (int i = 0; i < static_cast<int>(m_available.size()); ++i) {
 		if (m_available[i].surface.id == it->surfaceId) { cur = i; break; }
 	}
-	const auto& target = m_available[(cur + 1) % m_available.size()].surface;
+	applyRetarget(*it, (cur + 1) % static_cast<int>(m_available.size()));
+}); }
+
+void QOverlay::WindowManager::retargetOverlayTo(const QString& id, const QString& surfaceId) {
+	// Called from a control-bar click; defer to stay out of QML event delivery (see addSurface).
+	QTimer::singleShot(0, this, [this, id, surfaceId]() { Guarded("retargetOverlayTo", [&]() {
+		const auto it = std::find_if(m_active.begin(), m_active.end(),
+			[&](const Active& a) { return a.id == id; });
+		if (it == m_active.end() || m_backend == nullptr) return;
+
+		int idx = -1;
+		for (int i = 0; i < static_cast<int>(m_available.size()); ++i) {
+			if (m_available[i].surface.id == surfaceId) { idx = i; break; }
+		}
+		if (idx < 0) {
+			fmt::print("WindowManager: retargetOverlayTo: unknown surface id {}\n", surfaceId.toStdString());
+			return;
+		}
+		applyRetarget(*it, idx);
+	}); });
+}
+
+void QOverlay::WindowManager::applyRetarget(Active& active, int availableIndex) {
+	if (availableIndex < 0 || availableIndex >= static_cast<int>(m_available.size())) return;
+	const auto& target = m_available[availableIndex].surface;
 
 	Capture::ICaptureSource* newSource = m_backend->createSource(target.id, nullptr);
 	if (newSource == nullptr) {
@@ -246,20 +352,20 @@ void QOverlay::WindowManager::retargetNow(const QString& id) { Guarded("retarget
 		return;
 	}
 
-	if (m_focused == it->source) m_focused = newSource;
-	it->scene->SetSource(newSource); // deletes the old source (auto-disconnects its signal)
+	if (m_focused == active.source) m_focused = newSource;
+	active.scene->SetSource(newSource); // deletes the old source (auto-disconnects its signal)
 	connect(newSource, &Capture::ICaptureSource::interacted, this, [this, newSource]() {
 		m_focused = newSource;
 	});
 
-	it->source = newSource;
-	it->surfaceId = target.id;
-	it->title = target.title;
-	it->kind = target.kind;
-	if (it->controls != nullptr) it->controls->setTitle(target.title);
-	fmt::print("WindowManager: retargeted overlay {} -> '{}'\n", id.toStdString(), target.title.toStdString());
+	active.source = newSource;
+	active.surfaceId = target.id;
+	active.title = target.title;
+	active.kind = target.kind;
+	if (active.controls != nullptr) active.controls->setTitle(target.title);
+	fmt::print("WindowManager: retargeted overlay {} -> '{}'\n", active.id.toStdString(), target.title.toStdString());
 	emit activeOverlaysChanged();
-}); }
+}
 
 void QOverlay::WindowManager::sendText(const QString& text) { Guarded("sendText", [&]() {
 	if (m_focused != nullptr) m_focused->injectText(text);
@@ -278,7 +384,14 @@ void QOverlay::WindowManager::submitFrames() { Guarded("submitFrames", [&]() {
 		if (active.scene != nullptr) {
 			active.scene->Submit();
 		}
+		// Keep the overlay upright while "pitch level" is on — but not while it's being grabbed
+		// (the hand owns the pose then) or locked to a device (the device owns it).
+		if (active.pitchLevel && active.overlay != nullptr
+		    && !active.overlay->IsGrabbed() && !active.overlay->IsLocked()) {
+			active.overlay->LevelPitch();
+		}
 		positionBar(active); // keep the control bar under the overlay as it moves/resizes
+		if (active.id == m_popupOwnerId) positionPopup(active); // keep the popup glued to it too
 	}
 }); }
 
@@ -294,10 +407,14 @@ void QOverlay::WindowManager::positionBar(const Active& active) {
 	const float aspect = (sz.width() > 0) ? static_cast<float>(sz.height()) / static_cast<float>(sz.width()) : 0.5f;
 	const float h = w * aspect;
 
-	// Sit just below the overlay (down its local -Y), same orientation.
+	// The bar is now just the three buttons (the panels moved to the shared popup), so it's a
+	// short strip that sits just below the window, a few mm proud along the window's +Z so it
+	// doesn't z-fight the window plane.
 	const glm::vec3 up = glm::normalize(glm::vec3(m[1]));
-	const float barWidth = std::clamp(w * 0.55f, 0.2f, 0.6f);
-	const glm::vec3 pos = glm::vec3(m[3]) - up * (h * 0.5f + 0.06f);
+	const glm::vec3 forward = glm::normalize(glm::vec3(m[2]));
+	const float barWidth = std::clamp(w * 0.45f, 0.18f, 0.5f);
+	const float barH = barWidth * 0.16f; // ControlBar aspect (~620x100)
+	const glm::vec3 pos = glm::vec3(m[3]) - up * (h * 0.5f + barH * 0.5f + 0.04f) + forward * 0.004f;
 
 	glm::mat4 bm = m;
 	bm[3] = glm::vec4(pos, 1.0f);
@@ -306,22 +423,64 @@ void QOverlay::WindowManager::positionBar(const Active& active) {
 	active.bar->SetTransformAbsolute(VR::Transform(bm));
 }
 
+void QOverlay::WindowManager::positionPopup(const Active& active) {
+	if (active.overlay == nullptr || !VR::PopupOverlay::Instance().Visible()) return;
+
+	VR::Transform t;
+	if (!active.overlay->GetTransformAbsolute(t)) return;
+
+	// Centre the popup on the window and float it 3cm toward the viewer, so it reads as a
+	// distinct layer floating in front of the window rather than pasted onto its surface.
+	glm::mat4 m = t.ToGlmMatrix();
+	const glm::vec3 forward = glm::normalize(glm::vec3(m[2]));
+	m[3] += glm::vec4(forward * 0.03f, 0.0f);
+	VR::PopupOverlay::Instance().SetTransform(m);
+}
+
 void QOverlay::WindowManager::placeOverlay(VR::Overlay* overlay, int slot) {
-	// Fan new overlays out horizontally in a shallow arc in front of the user; they can
-	// then be grabbed and repositioned with the controllers.
-	const float x = -0.9f + 0.6f * static_cast<float>(slot % 4);
-	const float y = 1.5f;
-	const float z = -2.0f;
+	// Spawn in front of wherever the user is currently looking: read the HMD pose, walk out
+	// along its (horizontal) forward, fan multiple overlays sideways, and face them back at
+	// the user. They can then be grabbed and repositioned. Falls back to a fixed spot ahead
+	// of the standing origin if the HMD pose isn't available yet.
+	const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+	constexpr float distance = 1.6f; // metres out from the head
+	constexpr float spread = 0.6f;   // sideways gap between fanned overlays
 
-	vr::HmdMatrix34_t transform = {};
-	transform.m[0][0] = 1.0f;
-	transform.m[1][1] = 1.0f;
-	transform.m[2][2] = 1.0f;
-	transform.m[0][3] = x;
-	transform.m[1][3] = y;
-	transform.m[2][3] = z;
+	glm::vec3 eye(0.0f, 1.5f, 0.0f);
+	glm::vec3 fwd(0.0f, 0.0f, -1.0f);
 
-	if (auto* vroverlay = vr::VROverlay()) {
-		vroverlay->SetOverlayTransformAbsolute(overlay->Handle(), vr::TrackingUniverseStanding, &transform);
+	if (auto system = vr::VRSystem()) {
+		std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses;
+		system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, poses.data(), vr::k_unMaxTrackedDeviceCount);
+		const auto& hmd = poses[vr::k_unTrackedDeviceIndex_Hmd];
+		if (hmd.bPoseIsValid) {
+			const glm::mat4 hmdMat = VR::Conversion::ToGlmMat(hmd.mDeviceToAbsoluteTracking);
+			eye = glm::vec3(hmdMat[3]);
+			glm::vec3 f = -glm::vec3(hmdMat[2]);
+			f.y = 0.0f; // keep overlays level regardless of head pitch
+			if (glm::length(f) > 1e-4f) fwd = glm::normalize(f);
+		}
 	}
+
+	const glm::vec3 right = glm::normalize(glm::cross(fwd, worldUp)); // user's right
+	// Fan out symmetrically around straight-ahead: the first overlay lands dead centre, the
+	// next ones alternate right/left so a single spawn is right in front of you.
+	static constexpr float kFanSteps[] = { 0.0f, 1.0f, -1.0f, 2.0f, -2.0f };
+	const float offset = spread * kFanSteps[slot % 5];
+	const glm::vec3 pos = eye + fwd * distance + right * offset;
+
+	// An OpenVR overlay shows its texture on its +Z face, so the overlay's +Z must point back
+	// toward the eye for the user to see it (horizontal only, so it stays upright).
+	glm::vec3 toEye = eye - pos;
+	toEye.y = 0.0f;
+	const glm::vec3 z = (glm::length(toEye) > 1e-4f) ? glm::normalize(toEye) : -fwd; // local +Z faces the user
+	const glm::vec3 x = glm::normalize(glm::cross(worldUp, z));
+	const glm::vec3 y = glm::cross(z, x);
+
+	glm::mat4 m(1.0f);
+	m[0] = glm::vec4(x, 0.0f);
+	m[1] = glm::vec4(y, 0.0f);
+	m[2] = glm::vec4(z, 0.0f);
+	m[3] = glm::vec4(pos, 1.0f);
+	overlay->SetTransformAbsolute(VR::Transform(m));
 }

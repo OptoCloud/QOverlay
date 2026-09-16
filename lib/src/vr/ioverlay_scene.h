@@ -25,6 +25,10 @@ public:
 	virtual bool FireMouseEvent(int hand, Qt::MouseButton button, const glm::vec2& pos) = 0;
 	virtual void MouseNotPresent(int hand) = 0;
 
+	// Wheel-scroll the surface at `pos` by `notches` detents (+up / -down), driven by the
+	// thumbstick while hovering. Default no-op for scenes that don't scroll.
+	virtual void FireScroll(int /*hand*/, const glm::vec2& /*pos*/, int /*notches*/) {}
+
 	// Whether the raycaster should float its per-hand VR cursor overlay over this scene.
 	// QML scenes want it (they no longer draw their own dot); capture scenes don't — they
 	// inject the real OS cursor, which the captured frame already shows.

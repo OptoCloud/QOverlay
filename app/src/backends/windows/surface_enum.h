@@ -20,10 +20,11 @@ struct CaptureTarget {
 	CaptureSurface::Kind kind = CaptureSurface::Kind::Monitor;
 	QString id;
 	QString title;
+	QString appName;
 	HMONITOR monitor = nullptr;
 	HWND window = nullptr;
 
-	CaptureSurface toSurface() const { return CaptureSurface{ id, title, kind }; }
+	CaptureSurface toSurface() const { return CaptureSurface{ id, title, appName, kind }; }
 };
 
 // All connected monitors, ordered by EnumDisplayMonitors.

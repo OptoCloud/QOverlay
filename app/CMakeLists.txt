@@ -16,6 +16,11 @@ set (${project}_SOURCE
 	"src/overlay_bridge.h"
 	"src/overlay_controls.h"
 	"src/overlay_controls.cpp"
+	# Shared popup overlay (Options/Sources panels) - references OverlayControls/WindowManager,
+	# so it lives here rather than in lib/ alongside the generic Overlay/QmlOverlayScene classes
+	# it's built from.
+	"src/vr/popup_overlay.h"
+	"src/vr/popup_overlay.cpp"
 
 	# Backend-neutral capture layer: the abstract backend contract and the pieces that
 	# depend only on it. The concrete backend is selected below and is the only OS-specific

@@ -30,8 +30,13 @@ struct Input {
 	static float GripValue(Hand hand);
 
 	// Thumbstick / trackpad position for the given hand, x/y in [-1,1]. Zeroed if the
-	// action is unbound/inactive. Used to push/pull a grabbed overlay (y axis).
+	// action is unbound/inactive. Used to push/pull a grabbed overlay and to scroll the
+	// hovered surface (y axis).
 	static void Thumbstick(Hand hand, float& outX, float& outY);
+
+	// True while the thumb rests on the pad/stick. Used as a modifier: a trigger pull with
+	// the thumb touching becomes a right-click instead of a left-click. False if unbound.
+	static bool ThumbTouchActive(Hand hand);
 
 	// The controller's aim ("tip") pose for the given hand, in standing-universe space.
 	// This is the manufacturer-defined pointing direction — use it for raycasting rather

@@ -30,6 +30,7 @@ public:
 	void submit(vr::VROverlayHandle_t overlay) override;
 	void injectMouse(Qt::MouseButton button, const QPointF& overlayPixel) override;
 	void mouseGone() override;
+	void injectScroll(int notches, const QPointF& overlayPixel) override;
 	void injectText(const QString& text) override;
 	void injectKey(Qt::Key key, bool down) override;
 
@@ -57,6 +58,12 @@ private:
 	// of registering a tiny drag.
 	QPointF m_pressAnchor;
 	bool m_dragging = false;
+
+	// Double-click assist: a second press soon after (and near) the previous one snaps to the
+	// exact same anchor pixel, so both button-downs land on one point and the target/OS
+	// coalesces them into a real double-click — VR-pointer jitter can't split them apart.
+	QPointF m_lastPressAnchor;
+	unsigned long long m_lastPressTick = 0;
 
 	bool m_loggedSubmit = false;
 	std::uint64_t m_submitErrors = 0;

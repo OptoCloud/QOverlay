@@ -13,6 +13,30 @@ QString HandleId(const char* prefix, void* handle) {
 	return QString("%1:0x%2").arg(prefix).arg(reinterpret_cast<quintptr>(handle), 16, 16, QChar('0'));
 }
 
+// Friendly application name for a window: its executable base name without the ".exe"
+// extension, first letter upper-cased (e.g. "chrome.exe" -> "Chrome"). Empty if the process
+// can't be opened (e.g. elevated). Keeps out of version-info APIs so no extra libs are needed.
+QString AppNameFor(HWND hwnd) {
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hwnd, &pid);
+	if (pid == 0) return {};
+
+	HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (proc == nullptr) return {};
+
+	wchar_t path[MAX_PATH] = {};
+	DWORD len = static_cast<DWORD>(std::size(path));
+	const BOOL ok = QueryFullProcessImageNameW(proc, 0, path, &len);
+	CloseHandle(proc);
+	if (!ok || len == 0) return {};
+
+	QString name = QString::fromWCharArray(path, static_cast<int>(len));
+	name = name.mid(name.lastIndexOf(QLatin1Char('\\')) + 1); // base name
+	if (name.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive)) name.chop(4);
+	if (!name.isEmpty()) name[0] = name[0].toUpper();
+	return name;
+}
+
 BOOL CALLBACK MonitorProc(HMONITOR monitor, HDC /*hdc*/, LPRECT /*rect*/, LPARAM param) {
 	auto* out = reinterpret_cast<std::vector<CaptureTarget>*>(param);
 
@@ -75,6 +99,7 @@ BOOL CALLBACK WindowProc(HWND hwnd, LPARAM param) {
 	target.kind = CaptureSurface::Kind::Window;
 	target.id = HandleId("window", hwnd);
 	target.title = QString::fromWCharArray(buffer);
+	target.appName = AppNameFor(hwnd);
 	target.window = hwnd;
 	out->push_back(target);
 	return TRUE;

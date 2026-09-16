@@ -31,6 +31,7 @@ public:
 	// Desktop injection is a single OS cursor, so the hand index is ignored.
 	bool FireMouseEvent(int hand, Qt::MouseButton button, const glm::vec2& pos) override;
 	void MouseNotPresent(int hand) override;
+	void FireScroll(int hand, const glm::vec2& pos, int notches) override;
 
 	// Pull the latest captured frame and submit it to the overlay. Call once per VR tick.
 	void Submit();

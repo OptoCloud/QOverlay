@@ -21,6 +21,10 @@ void QOverlay::VR::CaptureOverlayScene::MouseNotPresent(int /*hand*/) {
 	if (m_source != nullptr) m_source->mouseGone();
 }
 
+void QOverlay::VR::CaptureOverlayScene::FireScroll(int /*hand*/, const glm::vec2& pos, int notches) {
+	if (m_source != nullptr) m_source->injectScroll(notches, QPointF(pos.x, pos.y));
+}
+
 void QOverlay::VR::CaptureOverlayScene::Submit() {
 	if (m_source != nullptr) m_source->submit(m_handle);
 }

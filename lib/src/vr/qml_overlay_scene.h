@@ -75,6 +75,7 @@ public:
 	// QMouseEvent stream used by MouseArea-based QML.
 	bool FireMouseEvent(int hand, Qt::MouseButton button, const glm::vec2& pos) override;
 	void MouseNotPresent(int hand) override;
+	void FireScroll(int hand, const glm::vec2& pos, int notches) override;
 
 	// QML overlays draw no cursor of their own now — the raycaster floats a per-hand cursor
 	// overlay over them instead (so pointer motion doesn't re-rasterize the scene).

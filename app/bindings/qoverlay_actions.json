@@ -12,6 +12,7 @@
     { "name": "/actions/main/in/GripValue", "type": "vector1", "requirement": "optional" },
     { "name": "/actions/main/in/Pointer", "type": "pose", "requirement": "optional" },
     { "name": "/actions/main/in/Thumbstick", "type": "vector2", "requirement": "optional" },
+    { "name": "/actions/main/in/ThumbTouch", "type": "boolean", "requirement": "optional" },
     { "name": "/actions/main/out/Haptic", "type": "vibration" }
   ],
   "action_sets": [
@@ -26,7 +27,8 @@
       "/actions/main/in/TriggerValue": "Trigger pull (analog)",
       "/actions/main/in/GripValue": "Grip force (analog)",
       "/actions/main/in/Pointer": "Aim / pointing pose",
-      "/actions/main/in/Thumbstick": "Move grabbed overlay closer / farther",
+      "/actions/main/in/Thumbstick": "Move grabbed overlay closer / farther · scroll while hovering",
+      "/actions/main/in/ThumbTouch": "Thumb on pad → trigger becomes right-click",
       "/actions/main/out/Haptic": "Haptic feedback"
     }
   ]

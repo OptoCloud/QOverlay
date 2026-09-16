@@ -7,7 +7,7 @@ import QtQuick
 Rectangle {
     id: root
     implicitWidth: 720
-    implicitHeight: 1060
+    implicitHeight: 1180
     radius: 20
     color: "#12141a"
     border.color: "#2a2f3a"
@@ -43,6 +43,48 @@ Rectangle {
             // can't reinterpret VR-pointer jitter as a scroll and swallow the click.
             preventStealing: true
             onClicked: btn.clicked()
+        }
+    }
+
+    // Labelled 0..1 slider used for the global smoothing settings. Tracks the drag locally and
+    // only emits `moved` (which persists to config) on release, so a drag doesn't spam Save().
+    component LabeledSlider: Column {
+        id: ls
+        property string label: ""
+        property real value: 0
+        signal moved(real v)
+        width: 300
+        spacing: 6
+
+        property bool dragging: false
+        property real dragValue: 0
+        readonly property real shown: dragging ? dragValue : value
+
+        Text {
+            text: ls.label + "  " + Math.round(ls.shown * 100) + "%"
+            color: "#9aa3b2"; font.pixelSize: 15
+        }
+        Item {
+            id: track
+            width: parent.width; height: 34
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width; height: 10; radius: 5; color: "#2a3140"
+                Rectangle { width: parent.width * ls.shown; height: parent.height; radius: 5; color: "#4f9dff" }
+            }
+            Rectangle {
+                width: 26; height: 26; radius: 13; color: "#e6eaf2"; border.color: "#4f9dff"; border.width: 2
+                y: (track.height - height) / 2
+                x: Math.max(0, Math.min(track.width - width, track.width * ls.shown - width / 2))
+            }
+            MouseArea {
+                anchors.fill: parent
+                preventStealing: true
+                function set(mx) { ls.dragValue = Math.max(0, Math.min(1, mx / track.width)); ls.dragging = true }
+                onPressed: (mouse) => set(mouse.x)
+                onPositionChanged: (mouse) => { if (pressed) set(mouse.x) }
+                onReleased: { if (ls.dragging) { ls.moved(ls.dragValue); ls.dragging = false } }
+            }
         }
     }
 
@@ -249,6 +291,7 @@ Rectangle {
             }
 
             ListView {
+                id: activeList
                 anchors.fill: parent
                 anchors.margins: 6
                 spacing: 4
@@ -294,6 +337,28 @@ Rectangle {
                         onClicked: if (windowManager) windowManager.closeOverlay(modelData.id)
                     }
                 }
+            }
+        }
+
+        // ── Smoothing (global) ──
+        Text {
+            text: "Smoothing"
+            color: "#9aa3b2"; font.pixelSize: 15; font.bold: true
+        }
+        Row {
+            width: parent.width
+            spacing: 20
+            LabeledSlider {
+                width: (parent.width - 20) / 2
+                label: "Cursor"
+                value: app ? app.cursorSmoothing : 0
+                onMoved: (v) => { if (app) app.cursorSmoothing = v }
+            }
+            LabeledSlider {
+                width: (parent.width - 20) / 2
+                label: "Overlay drag"
+                value: app ? app.dragSmoothing : 0
+                onMoved: (v) => { if (app) app.dragSmoothing = v }
             }
         }
     }

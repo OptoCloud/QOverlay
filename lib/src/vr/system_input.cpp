@@ -37,6 +37,14 @@ struct ControllerState {
 	glm::vec2 capturedPixel = glm::vec2(0.0f);
 	bool wasGripPressed = false;
 	bool wasTriggerPressed = false;
+	// Button chosen at the trigger's rising edge (left, or right if the thumb was on the pad)
+	// and held for the whole press so lifting the thumb mid-press can't flip it.
+	Qt::MouseButton pressButton = Qt::NoButton;
+	// Fractional wheel-notch accumulator for thumbstick scrolling while hovering.
+	float scrollAccum = 0.0f;
+	// Exponential-moving-average state for cursor-motion smoothing (Config::CursorSmoothing).
+	glm::vec2 cursorPixel = glm::vec2(0.0f);
+	bool cursorValid = false;
 };
 static std::array<ControllerState, vr::k_unMaxTrackedDeviceCount> s_controllerState = {};
 
@@ -229,6 +237,16 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 	bool triggerPressed = QOverlay::VR::Input::ClickActive(hand);
 	bool gripPressed = QOverlay::VR::Input::GrabActive(hand);
 
+	// Decide the effective mouse button for this press cycle at the trigger's rising edge:
+	// thumb resting on the pad/stick → right-click, otherwise left. Latched in pressButton so
+	// it stays consistent until release; clickButton is NoButton whenever the trigger is up.
+	if (triggerPressed && !state.wasTriggerPressed) {
+		state.pressButton = QOverlay::VR::Input::ThumbTouchActive(hand) ? Qt::RightButton : Qt::LeftButton;
+	} else if (!triggerPressed) {
+		state.pressButton = Qt::NoButton;
+	}
+	const Qt::MouseButton clickButton = triggerPressed ? state.pressButton : Qt::NoButton;
+
 	// Debug: log grip press with the analog grip value that triggered it
 	if (gripPressed && !state.wasGripPressed) {
 		fmt::print("[CTRL #{:0>2}] Grip pressed (gripValue={:.3f}, hovering: {})\n",
@@ -285,8 +303,7 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 				state.capturedPixel = pixel; // else: ray parallel/behind — hold last edge position
 			}
 
-			const Qt::MouseButton button = triggerPressed ? Qt::LeftButton : Qt::NoButton;
-			captured->Scene()->FireMouseEvent(handIdx, button, state.capturedPixel);
+			captured->Scene()->FireMouseEvent(handIdx, clickButton, state.capturedPixel);
 			showCursor(captured, capturedTransform.ToGlmMatrix(), state.capturedPixel, triggerPressed);
 			state.hoveredOverlay = captured;
 
@@ -354,9 +371,41 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 		} else if (!hitOverlay->IsGrabbed()) {
 			// Normal hover/click — only when the overlay isn't already being grabbed (by the
 			// other hand), so the two hands don't fight over it.
-			Qt::MouseButton button = triggerPressed ? Qt::LeftButton : Qt::NoButton;
-			hitOverlay->Scene()->FireMouseEvent(handIdx, button, hitPixel);
+
+			// Cursor smoothing: exponentially blend toward the raw hit so the dot glides instead
+			// of jittering. Reset on a fresh hover (or a big jump) so it doesn't slide in from the
+			// last position. Skipped while the trigger is down so clicks land exactly where aimed.
+			const float cs = QOverlay::Config::Instance().CursorSmoothing();
+			if (cs > 0.0f && !triggerPressed) {
+				const bool jumped = glm::distance(hitPixel, state.cursorPixel) > 200.0f;
+				if (state.cursorValid && state.hoveredOverlay == hitOverlay && !jumped) {
+					hitPixel = glm::mix(hitPixel, state.cursorPixel, cs);
+				}
+			}
+			state.cursorPixel = hitPixel;
+			state.cursorValid = true;
+
+			hitOverlay->Scene()->FireMouseEvent(handIdx, clickButton, hitPixel);
 			showCursor(hitOverlay, hitMat, hitPixel, triggerPressed);
+
+			// Thumbstick Y scrolls the hovered surface while NOT clicking (a click means a
+			// press/drag, not a scroll). Push up = scroll up; held = repeat, rate ∝ deflection.
+			// The fractional accumulator turns the per-poll deflection into whole wheel notches.
+			if (!triggerPressed) {
+				float tx = 0.0f, ty = 0.0f;
+				QOverlay::VR::Input::Thumbstick(hand, tx, ty);
+				if (std::fabs(ty) > 0.2f) {
+					constexpr float kScrollRate = 0.15f; // notches accrued per poll at full deflection
+					state.scrollAccum += ty * kScrollRate;
+					const int notches = static_cast<int>(state.scrollAccum);
+					if (notches != 0) {
+						state.scrollAccum -= static_cast<float>(notches);
+						hitOverlay->Scene()->FireScroll(handIdx, hitPixel, notches);
+					}
+				} else {
+					state.scrollAccum = 0.0f;
+				}
+			}
 
 			// Trigger press start — haptic + begin mouse capture on this overlay.
 			if (triggerPressed && !state.wasTriggerPressed) {
@@ -374,6 +423,8 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 			state.hoveredOverlay->Scene()->MouseNotPresent(handIdx);
 		}
 		state.hoveredOverlay = nullptr;
+		state.scrollAccum = 0.0f;   // not hovering anything — drop any partial scroll notch
+		state.cursorValid = false;  // and restart cursor smoothing on the next hover
 		hideCursor(); // not pointing at anything
 	}
 

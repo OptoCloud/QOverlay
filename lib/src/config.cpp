@@ -33,6 +33,8 @@ bool QOverlay::Config::Load() {
 	m_leftHanded = obj.value("leftHanded").toBool(m_leftHanded);
 	m_clickThreshold = static_cast<float>(obj.value("clickThreshold").toDouble(m_clickThreshold));
 	m_grabThreshold = static_cast<float>(obj.value("grabThreshold").toDouble(m_grabThreshold));
+	m_cursorSmoothing = static_cast<float>(obj.value("cursorSmoothing").toDouble(m_cursorSmoothing));
+	m_dragSmoothing = static_cast<float>(obj.value("dragSmoothing").toDouble(m_dragSmoothing));
 
 	fmt::print("Config loaded from {}\n", configPath().toStdString());
 	return true;
@@ -43,6 +45,8 @@ bool QOverlay::Config::Save() const {
 	obj["leftHanded"] = m_leftHanded;
 	obj["clickThreshold"] = m_clickThreshold;
 	obj["grabThreshold"] = m_grabThreshold;
+	obj["cursorSmoothing"] = m_cursorSmoothing;
+	obj["dragSmoothing"] = m_dragSmoothing;
 
 	QFile file(configPath());
 	if (!file.open(QIODevice::WriteOnly)) {
@@ -69,6 +73,18 @@ void QOverlay::Config::SetClickThreshold(float threshold) {
 
 void QOverlay::Config::SetGrabThreshold(float threshold) {
 	m_grabThreshold = qBound(0.05f, threshold, 1.0f);
+	Save();
+	emit Changed();
+}
+
+void QOverlay::Config::SetCursorSmoothing(float amount) {
+	m_cursorSmoothing = qBound(0.0f, amount, 0.95f);
+	Save();
+	emit Changed();
+}
+
+void QOverlay::Config::SetDragSmoothing(float amount) {
+	m_dragSmoothing = qBound(0.0f, amount, 0.95f);
 	Save();
 	emit Changed();
 }

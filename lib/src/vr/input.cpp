@@ -18,6 +18,7 @@ vr::VRActionHandle_t s_triggerValueAction = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t s_gripValueAction = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t s_pointerPoseAction = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t s_thumbstickAction = vr::k_ulInvalidActionHandle;
+vr::VRActionHandle_t s_thumbTouchAction = vr::k_ulInvalidActionHandle;
 vr::VRActionHandle_t s_hapticAction = vr::k_ulInvalidActionHandle;
 vr::VRInputValueHandle_t s_leftHand = vr::k_ulInvalidInputValueHandle;
 vr::VRInputValueHandle_t s_rightHand = vr::k_ulInvalidInputValueHandle;
@@ -54,6 +55,7 @@ bool QOverlay::VR::Input::Initialize() {
 	getAction("/actions/main/in/GripValue", s_gripValueAction);
 	getAction("/actions/main/in/Pointer", s_pointerPoseAction);
 	getAction("/actions/main/in/Thumbstick", s_thumbstickAction);
+	getAction("/actions/main/in/ThumbTouch", s_thumbTouchAction);
 	getAction("/actions/main/out/Haptic", s_hapticAction);
 
 	if (const vr::EVRInputError error = input->GetInputSourceHandle("/user/hand/left", &s_leftHand); error != vr::VRInputError_None) {
@@ -137,6 +139,10 @@ void QOverlay::VR::Input::Thumbstick(Hand hand, float& outX, float& outY) {
 	if (!data.bActive) return;
 	outX = data.x;
 	outY = data.y;
+}
+
+bool QOverlay::VR::Input::ThumbTouchActive(Hand hand) {
+	return DigitalActive(s_thumbTouchAction, hand);
 }
 
 bool QOverlay::VR::Input::ClickActive(Hand hand) {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config.h"
+
 #include <QObject>
 #include <QString>
 
@@ -15,6 +17,9 @@ class OverlayBridge : public QObject {
 	Q_PROPERTY(bool leftHanded READ leftHanded NOTIFY leftHandedChanged)
 	Q_PROPERTY(bool panelVisible READ panelVisible NOTIFY panelVisibleChanged)
 	Q_PROPERTY(bool keyboardVisible READ keyboardVisible NOTIFY keyboardVisibleChanged)
+	// Global input-smoothing amounts (0..1), persisted in Config. Live everywhere immediately.
+	Q_PROPERTY(qreal cursorSmoothing READ cursorSmoothing WRITE setCursorSmoothing NOTIFY smoothingChanged)
+	Q_PROPERTY(qreal dragSmoothing READ dragSmoothing WRITE setDragSmoothing NOTIFY smoothingChanged)
 public:
 	using QObject::QObject;
 
@@ -22,6 +27,19 @@ public:
 	bool leftHanded() const { return m_leftHanded; }
 	bool panelVisible() const { return m_panelVisible; }
 	bool keyboardVisible() const { return m_keyboardVisible; }
+	qreal cursorSmoothing() const { return Config::Instance().CursorSmoothing(); }
+	qreal dragSmoothing() const { return Config::Instance().DragSmoothing(); }
+
+	void setCursorSmoothing(qreal amount) {
+		if (qFuzzyCompare(cursorSmoothing(), amount)) return;
+		Config::Instance().SetCursorSmoothing(static_cast<float>(amount));
+		emit smoothingChanged();
+	}
+	void setDragSmoothing(qreal amount) {
+		if (qFuzzyCompare(dragSmoothing(), amount)) return;
+		Config::Instance().SetDragSmoothing(static_cast<float>(amount));
+		emit smoothingChanged();
+	}
 
 	Q_INVOKABLE void switchHand() { emit switchHandRequested(); }
 	// Toggle the expandable panel (from the wrist launcher).
@@ -59,6 +77,7 @@ signals:
 	void leftHandedChanged(bool leftHanded);
 	void panelVisibleChanged(bool visible);
 	void keyboardVisibleChanged(bool visible);
+	void smoothingChanged();
 
 private:
 	QString m_status = "Ready";

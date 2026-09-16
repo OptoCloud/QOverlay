@@ -1,5 +1,6 @@
 #include "vr/overlay.h"
 
+#include "config.h"
 #include "vr/conversion.h"
 #include "vr/qml_overlay_scene.h"
 #include "vr/system.h"
@@ -12,6 +13,7 @@
 #include <fmt/core.h>
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -215,6 +217,12 @@ void QOverlay::VR::Overlay::SetTransformAbsolute(const Transform& transform) {
 	m_attachedDevice = vr::k_unTrackedDeviceIndexInvalid;
 }
 
+void QOverlay::VR::Overlay::SetSortOrder(uint32_t order) {
+	if (auto overlay = vr::VROverlay()) {
+		overlay->SetOverlaySortOrder(m_handle, order);
+	}
+}
+
 void QOverlay::VR::Overlay::SetGrabHighlight(bool on) {
 	auto overlay = vr::VROverlay();
 	if (overlay == nullptr) return;
@@ -235,6 +243,7 @@ void QOverlay::VR::Overlay::BeginGrab(vr::TrackedDeviceIndex_t controllerIndex, 
 	glm::mat4 controllerInverse = glm::inverse(controllerTransform.ToGlmMatrix());
 	m_grabOffset = controllerInverse * overlayTransform.ToGlmMatrix();
 	m_grabbed = true;
+	m_hasSmoothedGrab = false; // restart drag-smoothing so it doesn't slide in from a stale pose
 	SetGrabHighlight(true);
 
 	// Save original attachment for restoration
@@ -246,6 +255,22 @@ void QOverlay::VR::Overlay::UpdateGrab(const Transform& controllerTransform) {
 
 	// New overlay transform = controller * offset
 	glm::mat4 newOverlayMat = controllerTransform.ToGlmMatrix() * m_grabOffset;
+
+	// Drag smoothing: exponentially blend the new pose toward the previous emitted one so a
+	// shaky hand doesn't jitter the overlay. Translation lerps; rotation slerps (both are
+	// rigid here). ds=0 → the raw pose (no smoothing).
+	const float ds = Config::Instance().DragSmoothing();
+	if (ds > 0.0f && m_hasSmoothedGrab) {
+		const glm::vec3 p = glm::mix(glm::vec3(newOverlayMat[3]), glm::vec3(m_smoothedGrab[3]), ds);
+		const glm::quat qNew = glm::quat_cast(glm::mat3(newOverlayMat));
+		const glm::quat qPrev = glm::quat_cast(glm::mat3(m_smoothedGrab));
+		glm::mat4 blended = glm::mat4_cast(glm::normalize(glm::slerp(qNew, qPrev, ds)));
+		blended[3] = glm::vec4(p, 1.0f);
+		newOverlayMat = blended;
+	}
+	m_smoothedGrab = newOverlayMat;
+	m_hasSmoothedGrab = true;
+
 	SetTransformAbsolute(Transform(newOverlayMat));
 }
 
@@ -303,6 +328,67 @@ void QOverlay::VR::Overlay::AttachToDevice(TrackedDevice::DeviceType deviceType,
 	if (overlay != nullptr) {
 		vr::HmdMatrix34_t mat = offset.ToHmdMatrix();
 		overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, deviceIndex, &mat);
+	}
+}
+
+void QOverlay::VR::Overlay::LevelPitch() {
+	Transform t;
+	if (!GetTransformAbsolute(t)) return;
+
+	const glm::mat4 m = t.ToGlmMatrix();
+	// The overlay faces its local -Z. Flatten that onto the horizontal plane for a yaw-only
+	// facing, then rebuild an orthonormal basis with world-up as the overlay's up.
+	glm::vec3 fwd = -glm::vec3(m[2]);
+	fwd.y = 0.0f;
+	if (glm::length(fwd) < 1e-4f) return; // facing straight up/down — nothing sensible to level to
+	fwd = glm::normalize(fwd);
+
+	const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+	const glm::vec3 z = -fwd;                              // local +Z
+	const glm::vec3 x = glm::normalize(glm::cross(worldUp, z));
+	const glm::vec3 y = glm::cross(z, x);                  // ≈ world up, orthonormal
+
+	glm::mat4 leveled(1.0f);
+	leveled[0] = glm::vec4(x, 0.0f);
+	leveled[1] = glm::vec4(y, 0.0f);
+	leveled[2] = glm::vec4(z, 0.0f);
+	leveled[3] = m[3];
+	SetTransformAbsolute(Transform(leveled));
+}
+
+void QOverlay::VR::Overlay::LockToDevice(TrackedDevice::DeviceType deviceType) {
+	const vr::TrackedDeviceIndex_t deviceIndex = TrackedDevice::GetIndex(deviceType);
+	if (deviceIndex == vr::k_unTrackedDeviceIndexInvalid) return;
+
+	Transform world;
+	if (!GetTransformAbsolute(world)) return;
+
+	auto system = vr::VRSystem();
+	if (system == nullptr) return;
+	std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses;
+	system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, poses.data(), vr::k_unMaxTrackedDeviceCount);
+	if (!poses[deviceIndex].bPoseIsValid) return;
+
+	// Offset = inverse(device) * overlay-world, so the overlay stays exactly where it is now
+	// and thereafter rides the device.
+	const glm::mat4 deviceMat = Conversion::ToGlmMat(poses[deviceIndex].mDeviceToAbsoluteTracking);
+	m_relativeOffset = Transform(glm::inverse(deviceMat) * world.ToGlmMatrix());
+	m_attachedDevice = deviceIndex;
+
+	if (auto overlay = vr::VROverlay()) {
+		vr::HmdMatrix34_t mat = m_relativeOffset.ToHmdMatrix();
+		overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, deviceIndex, &mat);
+	}
+}
+
+void QOverlay::VR::Overlay::Unlock() {
+	// Snapshot the current world pose (GetTransformAbsolute resolves the device-relative one)
+	// and pin it there; SetTransformAbsolute clears the attachment.
+	Transform world;
+	if (GetTransformAbsolute(world)) {
+		SetTransformAbsolute(world);
+	} else {
+		m_attachedDevice = vr::k_unTrackedDeviceIndexInvalid;
 	}
 }
 
