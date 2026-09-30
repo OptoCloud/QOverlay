@@ -94,7 +94,7 @@ QList<QOverlay::Capture::CaptureSurface> WlrootsBackend::enumerateSurfaces() {
 	// TODO(linux): one CaptureSurface per wl_output (monitor) and per foreign-toplevel
 	// handle (window). Populate m_targets with the wl_output*/toplevel handle.
 	QList<CaptureSurface> out;
-	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, t.kind });
+	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, t.appName, t.kind });
 	return out;
 }
 

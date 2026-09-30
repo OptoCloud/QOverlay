@@ -16,11 +16,12 @@ namespace QOverlay::Capture::Linux {
 //
 // SKELETON: the interface is implemented but the Wayland protocol wiring (registry bind +
 // wayland-scanner-generated glue + dmabuf/shm frame import) is TODO — see
-// docs/LINUX_BACKENDS.md. Written on Windows; unbuilt.
+// docs/LINUX_BACKENDS.md. Compiles, but untested.
 struct WlrTarget {
 	CaptureSurface::Kind kind = CaptureSurface::Kind::Monitor;
 	QString id;
 	QString title;
+	QString appName;          // foreign-toplevel app_id for windows; empty for monitors
 	void* output = nullptr;   // wl_output* for monitors
 	void* toplevel = nullptr; // zwlr_foreign_toplevel_handle_v1* for windows
 	QSize size;

@@ -16,6 +16,7 @@ struct X11Target {
 	CaptureSurface::Kind kind = CaptureSurface::Kind::Monitor;
 	QString id;
 	QString title;
+	QString appName;  // WM_CLASS class name for windows; empty for monitors
 	unsigned long window = 0;
 	int x = 0, y = 0, w = 0, h = 0;
 };
@@ -37,11 +38,13 @@ public:
 	void submit(vr::VROverlayHandle_t overlay) override;
 	void injectMouse(Qt::MouseButton button, const QPointF& overlayPixel) override;
 	void mouseGone() override;
+	void injectScroll(int notches, const QPointF& overlayPixel) override;
 	void injectText(const QString& text) override;
 	void injectKey(Qt::Key key, bool down) override;
 
 private:
 	bool overlayPixelToRoot(const QPointF& pixel, int& outX, int& outY) const;
+	void renamePixmap();
 
 	Display* m_display = nullptr;
 	X11Target m_target;
@@ -49,6 +52,7 @@ private:
 	GlSubmitter m_submitter;
 	bool m_started = false;
 	unsigned long m_pixmap = 0;      // XComposite-named pixmap for window capture
+	QSize m_pixmapSize;              // window size m_pixmap was named at (stale once it differs)
 	Qt::MouseButton m_held = Qt::NoButton;
 };
 
@@ -68,6 +72,7 @@ public:
 	QString name() const override { return QStringLiteral("X11 (XComposite/XTest)"); }
 	QList<CaptureSurface> enumerateSurfaces() override;
 	QImage grabThumbnail(const QString& surfaceId, int maxDim) override;
+	QImage grabIcon(const QString& surfaceId, int maxDim) override;
 	ICaptureSource* createSource(const QString& surfaceId, QObject* parent) override;
 
 private:
