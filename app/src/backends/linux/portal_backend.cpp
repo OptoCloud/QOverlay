@@ -82,8 +82,8 @@ QList<CaptureSurface> PortalBackend::enumerateSurfaces() {
 	// The portal picks the target via its own dialog, so we can only offer coarse choices;
 	// the concrete monitor/window is chosen when createSource() runs the portal flow.
 	QList<CaptureSurface> out;
-	out.append(CaptureSurface{ QStringLiteral("portal:monitor"), QStringLiteral("Pick a screen…"), CaptureSurface::Kind::Monitor });
-	out.append(CaptureSurface{ QStringLiteral("portal:window"),  QStringLiteral("Pick a window…"),  CaptureSurface::Kind::Window });
+	out.append(CaptureSurface{ QStringLiteral("portal:monitor"), QStringLiteral("Pick a screen…"), QString(), CaptureSurface::Kind::Monitor });
+	out.append(CaptureSurface{ QStringLiteral("portal:window"),  QStringLiteral("Pick a window…"),  QString(), CaptureSurface::Kind::Window });
 	return out;
 }
 

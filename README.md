@@ -17,7 +17,7 @@ The reusable SteamVR-overlay engine behind it (`lib/`, target `QOverlayLib`) is 
 | Platform | Capture | Input | Status |
 |---|---|---|---|
 | Windows 10 2004+ / 11 | WGC (D3D11) | SendInput | ✅ Working |
-| Linux (X11) | XComposite | XTest | 🔧 Near complete, not tested |
+| Linux (X11) | XComposite | XTest | 🔧 Builds; capture/input verified under Xvfb, not yet in a headset |
 | Linux (Wayland/wlroots) | wlr-screencopy | virtual-pointer/keyboard | 🏗 Skeleton |
 | Linux (xdg portal) | ScreenCast + PipeWire | RemoteDesktop | 🏗 Skeleton |
 
@@ -103,6 +103,11 @@ cmake --build out/build/linux-debug
 
 Available presets: `linux-debug`, `linux-release`.
 
+To skip vcpkg and use distro packages instead (e.g. `libfmt-dev libglm-dev libopenvr-dev
+qt6-base-dev qt6-declarative-dev` on Ubuntu 24.04 — older fmt/glm/OpenVR than vcpkg pins,
+but they build), use `linux-system-debug` / `linux-system-release`; these don't need
+`VCPKG_ROOT`.
+
 The configure step prints which capture sub-backends were found and enabled. This
 builds both `lib/` (`QOverlayLib`) and `app/` (`QOverlay`) - there's no separate step
 for the library, it's just another `add_subdirectory` in the same configure.
@@ -167,11 +172,11 @@ FetchContent_MakeAvailable(qoverlaylib)
 target_link_libraries(your_app PRIVATE QOverlay::Lib)
 ```
 
-Consumers need their own `bindings/<name>_actions.json` action manifest
-(`Input::Initialize()` looks for `bindings/qoverlay_actions.json` next to the
-executable - see `lib/src/vr/input.cpp`; making that path configurable instead of
-hardcoded is a known follow-up) and to call `InitLogging("<your-app-name>")` instead of
-relying on the `"qoverlay"` default log filename.
+Consumers should pass their own `AppIdentity` (app key, display name, and action-manifest
+path relative to the executable - see `lib/src/vr/system.h`) to `VRSystem::Initialize()`,
+so they don't register with SteamVR as "QOverlay" or need a `bindings/qoverlay_actions.json`,
+and call `InitLogging("<your-app-name>")` instead of relying on the `"qoverlay"` default log
+filename.
 
 ## Linux backends
 

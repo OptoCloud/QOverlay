@@ -45,6 +45,57 @@ QString WindowTitle(Display* dpy, Window win) {
 	return {};
 }
 
+// A window's WM_CLASS class name (e.g. "firefox", "Code") — the closest X11 analogue of the
+// owning application, used to group windows by app in the Sources panel.
+QString WindowClass(Display* dpy, Window win) {
+	XClassHint hint{};
+	if (!XGetClassHint(dpy, win, &hint)) return {};
+	QString cls = hint.res_class ? QString::fromUtf8(hint.res_class) : QString();
+	if (cls.isEmpty() && hint.res_name) cls = QString::fromUtf8(hint.res_name);
+	if (hint.res_name) XFree(hint.res_name);
+	if (hint.res_class) XFree(hint.res_class);
+	return cls;
+}
+
+// A window's _NET_WM_ICON: a CARDINAL array of back-to-back [width, height, ARGB pixels…]
+// entries, one per size. Picks the smallest entry at least `maxDim` on its longest side (or
+// the largest available), scaled down to `maxDim`. Null image when the window has no icon.
+QImage WindowIcon(Display* dpy, Window win, int maxDim) {
+	Atom netIcon = XInternAtom(dpy, "_NET_WM_ICON", True);
+	if (netIcon == None) return {};
+	Atom type = 0; int fmt = 0; unsigned long n = 0, after = 0; unsigned char* data = nullptr;
+	if (XGetWindowProperty(dpy, win, netIcon, 0, 1L << 24, False, XA_CARDINAL, &type, &fmt, &n, &after, &data) != Success || data == nullptr) return {};
+
+	// Format-32 properties come back as an array of C `long`, not 32-bit ints (so 8 bytes per
+	// element on LP64), with each pixel in the low 32 bits.
+	const auto* v = reinterpret_cast<const unsigned long*>(data);
+	unsigned long best = n, bestW = 0, bestH = 0;
+	for (unsigned long i = 0; i + 2 <= n;) {
+		const unsigned long w = v[i], h = v[i + 1];
+		if (w == 0 || h == 0 || w > 4096 || h > 4096 || w * h > n - i - 2) break;
+		const unsigned long dim = std::max(w, h), bestDim = std::max(bestW, bestH);
+		const bool better = best == n
+			|| (bestDim < static_cast<unsigned long>(maxDim) && dim > bestDim)
+			|| (dim >= static_cast<unsigned long>(maxDim) && dim < bestDim);
+		if (better) { best = i; bestW = w; bestH = h; }
+		i += 2 + w * h;
+	}
+
+	QImage icon;
+	if (best != n) {
+		icon = QImage(static_cast<int>(bestW), static_cast<int>(bestH), QImage::Format_ARGB32);
+		const unsigned long* px = v + best + 2;
+		for (unsigned long y = 0; y < bestH; ++y) {
+			auto* line = reinterpret_cast<QRgb*>(icon.scanLine(static_cast<int>(y)));
+			for (unsigned long x = 0; x < bestW; ++x) line[x] = static_cast<QRgb>(px[y * bestW + x] & 0xffffffffUL);
+		}
+	}
+	XFree(data);
+	if (icon.isNull()) return {};
+	if (icon.width() > maxDim || icon.height() > maxDim) icon = icon.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+	return icon;
+}
+
 // Convert an XImage (assumed 32-bit BGRA/TrueColor) to a QImage copy.
 QImage ImageFromX(XImage* img) {
 	if (img == nullptr) return {};
@@ -73,14 +124,23 @@ X11Source::~X11Source() {
 	}
 }
 
+// (Re)name the window's backing pixmap. XComposite allocates a new one every time the window
+// is resized, and the old name then still refers to the previous, smaller buffer — reading the
+// new geometry from it is a BadMatch, which Xlib's default error handler turns into exit().
+void X11Source::renamePixmap() {
+	if (m_pixmap != 0) XFreePixmap(m_display, static_cast<Pixmap>(m_pixmap));
+	m_pixmap = XCompositeNameWindowPixmap(m_display, static_cast<Window>(m_target.window));
+	m_pixmapSize = QSize(m_target.w, m_target.h);
+}
+
 bool X11Source::start() {
 	if (m_display == nullptr) return false;
 
 	if (m_target.kind == CaptureSurface::Kind::Window) {
 		// Redirect the window so its contents are available even when occluded, then name
-		// its backing pixmap once; we re-fetch on resize during submit.
+		// its backing pixmap; submit() re-names it whenever the window is resized.
 		XCompositeRedirectWindow(m_display, static_cast<Window>(m_target.window), CompositeRedirectAutomatic);
-		m_pixmap = XCompositeNameWindowPixmap(m_display, static_cast<Window>(m_target.window));
+		renamePixmap();
 	}
 
 	m_size = QSize(m_target.w, m_target.h);
@@ -99,6 +159,10 @@ void X11Source::submit(vr::VROverlayHandle_t overlay) {
 		Window root; int rx, ry; unsigned int w, h, bw, depth;
 		if (XGetGeometry(m_display, static_cast<Window>(m_target.window), &root, &rx, &ry, &w, &h, &bw, &depth)) {
 			gw = static_cast<int>(w); gh = static_cast<int>(h);
+		}
+		if (QSize(gw, gh) != m_pixmapSize) {
+			m_target.w = gw; m_target.h = gh;
+			renamePixmap();
 		}
 		drawable = m_pixmap != 0 ? static_cast<Drawable>(m_pixmap) : static_cast<Drawable>(m_target.window);
 	} else {
@@ -162,6 +226,23 @@ void X11Source::mouseGone() {
 	};
 	XTestFakeButtonEvent(m_display, xbtn(m_held), False, CurrentTime);
 	m_held = Qt::NoButton;
+	XFlush(m_display);
+}
+
+void X11Source::injectScroll(int notches, const QPointF& overlayPixel) {
+	if (notches == 0) return;
+	int x = 0, y = 0;
+	if (!overlayPixelToRoot(overlayPixel, x, y)) return;
+
+	// X11 has no wheel event as such: each detent is a click of button 4 (up) or 5 (down),
+	// delivered to whatever is under the pointer — so move there first, like the monitor path
+	// on Windows.
+	XTestFakeMotionEvent(m_display, -1, x, y, CurrentTime);
+	const unsigned int button = notches > 0 ? 4 : 5;
+	for (int i = 0; i < std::abs(notches); ++i) {
+		XTestFakeButtonEvent(m_display, button, True, CurrentTime);
+		XTestFakeButtonEvent(m_display, button, False, CurrentTime);
+	}
 	XFlush(m_display);
 }
 
@@ -265,6 +346,7 @@ QList<QOverlay::Capture::CaptureSurface> X11Backend::enumerateSurfaces() {
 				t.kind = CaptureSurface::Kind::Window;
 				t.id = HandleId("window", wins[i]);
 				t.title = title;
+				t.appName = WindowClass(m_display, wins[i]);
 				t.window = wins[i];
 				t.w = attr.width; t.h = attr.height;
 				m_targets.push_back(t);
@@ -274,7 +356,7 @@ QList<QOverlay::Capture::CaptureSurface> X11Backend::enumerateSurfaces() {
 	}
 
 	QList<CaptureSurface> out;
-	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, t.kind });
+	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, t.appName, t.kind });
 	return out;
 }
 
@@ -295,6 +377,12 @@ QImage X11Backend::grabThumbnail(const QString& surfaceId, int maxDim) {
 	if (img) XDestroyImage(img);
 	if (q.isNull()) return {};
 	return q.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
+QImage X11Backend::grabIcon(const QString& surfaceId, int maxDim) {
+	const X11Target* t = find(surfaceId);
+	if (t == nullptr || m_display == nullptr || t->kind != CaptureSurface::Kind::Window) return {};
+	return WindowIcon(m_display, static_cast<Window>(t->window), maxDim);
 }
 
 QOverlay::Capture::ICaptureSource* X11Backend::createSource(const QString& surfaceId, QObject* parent) {

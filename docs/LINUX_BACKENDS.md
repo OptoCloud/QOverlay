@@ -1,8 +1,11 @@
 # Linux capture/input backends
 
-> **Status:** scaffolds. Written on Windows and **not yet compiled or tested on Linux.**
-> X11 is close to complete; wlroots and portal are structured skeletons with the protocol
-> flow documented and the transport wiring stubbed (`TODO(linux)`).
+> **Status:** all three sub-backends **compile** on Linux (Ubuntu 24.04, GCC 13, Qt 6.4).
+> X11 is functional: enumeration, app name (`WM_CLASS`), icons (`_NET_WM_ICON`), thumbnails,
+> capture across window resizes, and XTest click/scroll were exercised against Xvfb +
+> openbox, but it has **not yet been run in a headset** (OpenGL overlay submission is
+> untested). wlroots and portal are structured skeletons with the protocol flow documented
+> and the transport wiring stubbed (`TODO(linux)`).
 
 QOverlay's capture/input is behind the `ICaptureBackend` / `ICaptureSource` contract
 (`src/capture/capture_backend.h`). On Linux, one binary compiles **all** available
@@ -46,7 +49,7 @@ Each sub-backend is enabled only if its libraries are found (configure log shows
 
 ## Remaining work per backend
 
-**X11** — mostly done. TODO: XShm for zero-copy-ish reads; temporary keymap remap in
+**X11** — mostly done. TODO: first run in SteamVR (check GL texture orientation); XShm for zero-copy-ish reads; temporary keymap remap in
 `injectText` for non-ASCII; optional damage events instead of full-frame `XGetImage`.
 
 **wlroots** — TODO: `wl_display` connect + registry bind of the managers; run
