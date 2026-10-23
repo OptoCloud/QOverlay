@@ -1,5 +1,7 @@
 #pragma once
 
+#include "vr/schmitt.h"
+
 #include <openvr.h>
 #include <cstdint>
 #include <string>
@@ -56,5 +58,13 @@ private:
 	// unbound/inactive so callers can fall back to the digital action.
 	static bool AnalogValue(vr::VRActionHandle_t action, Hand hand, float& out);
 	static vr::VRInputValueHandle_t HandSource(Hand hand);
+
+	// Shared hysteresis gate for an analog-or-digital action pair (click/grab): prefers
+	// the analog action with a Schmitt-trigger threshold, falling back to the digital
+	// action if the analog binding is absent. `label` ("Click"/"Grab") and `analogName`
+	// ("analog trigger"/"analog grip") only affect the one-shot bound/unbound diagnostic.
+	static bool AnalogOrDigitalGate(const char* label, const char* analogName,
+		vr::VRActionHandle_t analogAction, vr::VRActionHandle_t digitalAction,
+		Hand hand, float threshold, SchmittTrigger (&state)[2]);
 };
 }

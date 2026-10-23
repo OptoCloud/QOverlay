@@ -2,8 +2,6 @@
 
 #include <array>
 
-std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> s_trackedDevicePoses;
-
 vr::TrackedDeviceClass QOverlay::VR::TrackedDevice::GetClass(QOverlay::VR::TrackedDevice::DeviceType deviceType) {
 	switch (deviceType) {
 	case QOverlay::VR::TrackedDevice::DeviceType::HMD:

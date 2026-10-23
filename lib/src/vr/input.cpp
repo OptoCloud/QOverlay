@@ -1,14 +1,13 @@
 #include "vr/input.h"
 
 #include "config.h"
+#include "log.h"
 #include "vr/schmitt.h"
 
 #include <algorithm>
 
 #include <QCoreApplication>
 #include <QDir>
-
-#include <fmt/core.h>
 
 namespace {
 vr::VRActionSetHandle_t s_actionSet = vr::k_ulInvalidActionSetHandle;
@@ -24,29 +23,48 @@ vr::VRInputValueHandle_t s_leftHand = vr::k_ulInvalidInputValueHandle;
 vr::VRInputValueHandle_t s_rightHand = vr::k_ulInvalidInputValueHandle;
 }
 
+// Shared hysteresis gate for an analog-or-digital action pair (click/grab): prefers the
+// analog action with a Schmitt-trigger threshold, falling back to the digital action if the
+// analog binding is absent. `label` ("Click"/"Grab") and `analogName` ("analog trigger"/
+// "analog grip") only affect the one-shot bound/unbound diagnostic log.
+bool QOverlay::VR::Input::AnalogOrDigitalGate(const char* label, const char* analogName,
+		vr::VRActionHandle_t analogAction, vr::VRActionHandle_t digitalAction,
+		Hand hand, float threshold, SchmittTrigger (&state)[2]) {
+	const int i = (hand == Hand::Left) ? 0 : 1;
+	float value = 0.0f;
+	if (AnalogValue(analogAction, hand, value)) {
+		static bool logged[2] = {false, false};
+		if (!logged[i]) { logged[i] = true; LOG_INFO("{}[{}]: {} bound (threshold={:.2f})", label, i ? "R" : "L", analogName, threshold); }
+		return state[i].Update(value, threshold);
+	}
+	static bool loggedDigital[2] = {false, false};
+	if (!loggedDigital[i]) { loggedDigital[i] = true; LOG_WARN("{}[{}]: {} UNBOUND -> digital fallback (threshold ignored)", label, i ? "R" : "L", analogName); }
+	return DigitalActive(digitalAction, hand);
+}
+
 bool QOverlay::VR::Input::Initialize(const std::string& actionsRelativePath) {
 	auto input = vr::VRInput();
 	if (input == nullptr) {
-		fmt::print("Failed to get IVRInput interface\n");
+		LOG_ERROR("Failed to get IVRInput interface");
 		return false;
 	}
 
 	const QString manifestPath = QDir(QCoreApplication::applicationDirPath()).filePath(QString::fromStdString(actionsRelativePath));
 	if (const vr::EVRInputError error = input->SetActionManifestPath(manifestPath.toUtf8().constData()); error != vr::VRInputError_None) {
-		fmt::print("Failed to set action manifest path ({}): error {}\n", manifestPath.toStdString(), static_cast<int>(error));
+		LOG_ERROR("Failed to set action manifest path ({}): error {}", manifestPath.toStdString(), static_cast<int>(error));
 		return false;
 	}
 
 	bool ok = true;
 	auto getAction = [&](const char* path, vr::VRActionHandle_t& handle) {
 		if (const vr::EVRInputError error = input->GetActionHandle(path, &handle); error != vr::VRInputError_None) {
-			fmt::print("Failed to get action handle for {}: error {}\n", path, static_cast<int>(error));
+			LOG_ERROR("Failed to get action handle for {}: error {}", path, static_cast<int>(error));
 			ok = false;
 		}
 	};
 
 	if (const vr::EVRInputError error = input->GetActionSetHandle("/actions/main", &s_actionSet); error != vr::VRInputError_None) {
-		fmt::print("Failed to get action set handle: error {}\n", static_cast<int>(error));
+		LOG_ERROR("Failed to get action set handle: error {}", static_cast<int>(error));
 		ok = false;
 	}
 	getAction("/actions/main/in/Click", s_clickAction);
@@ -59,11 +77,11 @@ bool QOverlay::VR::Input::Initialize(const std::string& actionsRelativePath) {
 	getAction("/actions/main/out/Haptic", s_hapticAction);
 
 	if (const vr::EVRInputError error = input->GetInputSourceHandle("/user/hand/left", &s_leftHand); error != vr::VRInputError_None) {
-		fmt::print("Failed to get left hand source handle: error {}\n", static_cast<int>(error));
+		LOG_ERROR("Failed to get left hand source handle: error {}", static_cast<int>(error));
 		ok = false;
 	}
 	if (const vr::EVRInputError error = input->GetInputSourceHandle("/user/hand/right", &s_rightHand); error != vr::VRInputError_None) {
-		fmt::print("Failed to get right hand source handle: error {}\n", static_cast<int>(error));
+		LOG_ERROR("Failed to get right hand source handle: error {}", static_cast<int>(error));
 		ok = false;
 	}
 
@@ -79,7 +97,7 @@ void QOverlay::VR::Input::Update() {
 	activeSet.ulRestrictedToDevice = vr::k_ulInvalidInputValueHandle;
 
 	if (const vr::EVRInputError error = input->UpdateActionState(&activeSet, sizeof(activeSet), 1); error != vr::VRInputError_None) {
-		fmt::print("UpdateActionState failed: error {}\n", static_cast<int>(error));
+		LOG_ERROR("UpdateActionState failed: error {}", static_cast<int>(error));
 	}
 }
 
@@ -146,31 +164,15 @@ bool QOverlay::VR::Input::ThumbTouchActive(Hand hand) {
 }
 
 bool QOverlay::VR::Input::ClickActive(Hand hand) {
-	const int i = (hand == Hand::Left) ? 0 : 1;
 	static SchmittTrigger click[2];
-	float value = 0.0f;
-	if (AnalogValue(s_triggerValueAction, hand, value)) {
-		static bool logged[2] = {false, false};
-		if (!logged[i]) { logged[i] = true; fmt::print("Click[{}]: analog trigger bound (threshold={:.2f})\n", i ? "R" : "L", Config::Instance().ClickThreshold()); }
-		return click[i].Update(value, Config::Instance().ClickThreshold());
-	}
-	static bool loggedDigital[2] = {false, false};
-	if (!loggedDigital[i]) { loggedDigital[i] = true; fmt::print("Click[{}]: analog trigger UNBOUND -> digital fallback (threshold ignored)\n", i ? "R" : "L"); }
-	return DigitalActive(s_clickAction, hand);
+	return AnalogOrDigitalGate("Click", "analog trigger", s_triggerValueAction, s_clickAction,
+		hand, Config::Instance().ClickThreshold(), click);
 }
 
 bool QOverlay::VR::Input::GrabActive(Hand hand) {
-	const int i = (hand == Hand::Left) ? 0 : 1;
 	static SchmittTrigger grab[2];
-	float value = 0.0f;
-	if (AnalogValue(s_gripValueAction, hand, value)) {
-		static bool logged[2] = {false, false};
-		if (!logged[i]) { logged[i] = true; fmt::print("Grab[{}]: analog grip bound (threshold={:.2f})\n", i ? "R" : "L", Config::Instance().GrabThreshold()); }
-		return grab[i].Update(value, Config::Instance().GrabThreshold());
-	}
-	static bool loggedDigital[2] = {false, false};
-	if (!loggedDigital[i]) { loggedDigital[i] = true; fmt::print("Grab[{}]: analog grip UNBOUND -> digital fallback (threshold ignored)\n", i ? "R" : "L"); }
-	return DigitalActive(s_grabAction, hand);
+	return AnalogOrDigitalGate("Grab", "analog grip", s_gripValueAction, s_grabAction,
+		hand, Config::Instance().GrabThreshold(), grab);
 }
 
 bool QOverlay::VR::Input::PointerPose(Hand hand, vr::HmdMatrix34_t& outPose) {

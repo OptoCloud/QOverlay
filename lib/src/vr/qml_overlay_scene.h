@@ -2,6 +2,7 @@
 
 #include "vr/ioverlay_scene.h"
 
+#include <array>
 #include <memory>
 
 #include <QObject>
@@ -25,8 +26,9 @@ class QQuickItem;
 
 namespace QOverlay::VR {
 
-// Exposed to QML as the `pointer` context property so the .qml can draw its own
-// VR cursor (position + press state) instead of us compositing one in C++.
+// Exposed to QML as the `pointer` context property: per-hand pointer position/press
+// state used for hover-highlight and key activation in the .qml. The visible VR cursor
+// itself is drawn separately — see PointerCursor, driven by the raycaster.
 class PointerState : public QObject {
 	Q_OBJECT
 	Q_PROPERTY(qreal x READ x NOTIFY changed)
@@ -53,9 +55,10 @@ private:
 	bool m_pressed = false;
 };
 
-// QQuickRenderControl-based alternative to OverlayScene: renders a QML scene into
+// QQuickRenderControl-based IOverlayScene implementation: renders a QML scene into
 // an offscreen FBO and submits its GL texture to the OpenVR overlay. Kept as a
-// separate class so it sits side-by-side with the QGraphicsScene-based path.
+// separate class so it sits side-by-side with the desktop-capture path
+// (CaptureOverlayScene), which submits D3D11/GL textures from WGC/X11 instead.
 class QmlOverlayScene : public QObject, public IOverlayScene {
 	Q_OBJECT
 	Q_DISABLE_COPY(QmlOverlayScene)
@@ -113,7 +116,7 @@ private:
 	// windowManager, ctl) so overlays stay isolated from each other.
 	QQmlContext* m_context = nullptr;
 	QQmlComponent* m_component = nullptr;
-	PointerState* m_pointers[2] = { nullptr, nullptr }; // 0 = left hand, 1 = right hand
+	std::array<PointerState*, 2> m_pointers = { nullptr, nullptr }; // 0 = left hand, 1 = right hand
 
 	// Owned outright, NOT via a QObject parent: a QQuickWindow is a top-level window (no
 	// parent), and the root item created by QQmlComponent::create() is caller-owned
@@ -129,12 +132,12 @@ private:
 	// QOpenGLFramebufferObject — letting QRhi import a bare texture avoids the double-FBO
 	// conflict that left a GL_INVALID_OPERATION and got the texture rejected as
 	// VROverlayError_InvalidTexture.
-	GLuint m_textures[2] = { 0, 0 };
+	std::array<GLuint, 2> m_textures = { 0, 0 };
 	// Per-buffer GL fence (GLsync, stored as void* to keep GL sync types out of the header):
 	// signalled when that buffer's render finishes. Waited on before OpenVR reads (so it
 	// never samples a half-drawn frame) and before the buffer is reused. Replaces glFinish() —
 	// waits only for OUR render commands, not a full GPU pipeline drain.
-	void* m_fences[2] = { nullptr, nullptr };
+	std::array<void*, 2> m_fences = { nullptr, nullptr };
 	int m_frameIndex = 0; // which buffer the NEXT frame renders into (0/1)
 	vr::Texture_t m_tex = {};
 	QSize m_size;

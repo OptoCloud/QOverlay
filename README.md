@@ -94,6 +94,28 @@ cmake --build out/build/x64-debug
 
 Available presets: `x64-debug`, `x64-release`, `x86-debug`, `x86-release`.
 
+To build a Windows installer (`.msi`) instead of just running the built exe in place, build
+a release preset then package it with CPack (requires the [WiX Toolset v5](https://wixtoolset.org/)
+installed and on `PATH`):
+
+```bat
+cmake --preset x64-release
+cmake --build out/build/x64-release --config Release
+cd out/build/x64-release
+cpack -G WIX
+```
+
+This produces `QOverlay-<version>-win64.msi`, which installs per-user to
+`%LocalAppData%\Programs\QOverlay` (no admin/UAC prompt required), adds a Start Menu
+shortcut, and registers an uninstall entry under "Apps & Features".
+
+**Windows SmartScreen warning:** QOverlay isn't signed with a commercial code-signing
+certificate (this is a small, friends/community-distributed project with no code-signing
+budget), so Windows will likely show a blue "Windows protected your PC" SmartScreen screen
+when you run the installer. This is expected and normal for small open-source Windows
+tools — it doesn't indicate anything is wrong with the download. To proceed, click
+**"More info"**, then **"Run anyway."**
+
 ### 3. Configure & build (Linux)
 
 ```sh

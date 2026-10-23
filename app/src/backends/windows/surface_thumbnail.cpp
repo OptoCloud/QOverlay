@@ -27,11 +27,11 @@ QImage DibToImage(HDC mem, HBITMAP bmp, int w, int h) {
 	return image;
 }
 
-QImage GrabWindow(HWND hwnd) {
-	RECT rect{};
-	if (!GetWindowRect(hwnd, &rect)) return {};
-	const int w = rect.right - rect.left;
-	const int h = rect.bottom - rect.top;
+// Shared GDI scaffolding for both grab paths: make a screen-compatible memory DC/bitmap of
+// `w`x`h`, hand it to `paint` to fill in, then read the result back to a QImage and tear the
+// GDI objects down. `paint` returns whether it actually drew something.
+template <typename Paint>
+QImage GrabViaGdi(int w, int h, Paint&& paint) {
 	if (w < 2 || h < 2) return {};
 
 	HDC screen = GetDC(nullptr);
@@ -39,7 +39,7 @@ QImage GrabWindow(HWND hwnd) {
 	HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
 	HGDIOBJ old = SelectObject(mem, bmp);
 
-	const BOOL ok = PrintWindow(hwnd, mem, PW_RENDERFULLCONTENT);
+	const BOOL ok = paint(mem);
 
 	SelectObject(mem, old); // deselect before GetDIBits
 	QImage image = ok ? DibToImage(mem, bmp, w, h) : QImage();
@@ -121,6 +121,17 @@ HICON WindowIcon(HWND hwnd) {
 	return nullptr;
 }
 
+QImage GrabWindow(HWND hwnd) {
+	RECT rect{};
+	if (!GetWindowRect(hwnd, &rect)) return {};
+	const int w = rect.right - rect.left;
+	const int h = rect.bottom - rect.top;
+
+	return GrabViaGdi(w, h, [&](HDC mem) {
+		return PrintWindow(hwnd, mem, PW_RENDERFULLCONTENT);
+	});
+}
+
 QImage GrabMonitor(HMONITOR monitor) {
 	MONITORINFO info{};
 	info.cbSize = sizeof(info);
@@ -129,22 +140,13 @@ QImage GrabMonitor(HMONITOR monitor) {
 	const int y = info.rcMonitor.top;
 	const int w = info.rcMonitor.right - info.rcMonitor.left;
 	const int h = info.rcMonitor.bottom - info.rcMonitor.top;
-	if (w < 2 || h < 2) return {};
 
-	HDC screen = GetDC(nullptr);
-	HDC mem = CreateCompatibleDC(screen);
-	HBITMAP bmp = CreateCompatibleBitmap(screen, w, h);
-	HGDIOBJ old = SelectObject(mem, bmp);
-
-	const BOOL ok = BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY);
-
-	SelectObject(mem, old);
-	QImage image = ok ? DibToImage(mem, bmp, w, h) : QImage();
-
-	DeleteObject(bmp);
-	DeleteDC(mem);
-	ReleaseDC(nullptr, screen);
-	return image;
+	return GrabViaGdi(w, h, [&](HDC mem) {
+		HDC screen = GetDC(nullptr);
+		const BOOL ok = BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY);
+		ReleaseDC(nullptr, screen);
+		return ok;
+	});
 }
 
 }

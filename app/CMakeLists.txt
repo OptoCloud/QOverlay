@@ -69,6 +69,7 @@ if (QOVERLAY_BACKEND STREQUAL "windows")
 		"src/backends/windows/wgc_source.cpp"
 		"src/backends/windows/wgc_backend.h"
 		"src/backends/windows/wgc_backend.cpp"
+		"src/backends/windows/qt_key_to_vk.h"
 		"src/backends/windows/keyboard_layout_win.cpp"
 		"src/input/desktop_input_win.cpp"
 	)
@@ -144,6 +145,7 @@ target_include_directories(${project} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # Add libraries.
 target_link_libraries(${project} PRIVATE
+	qoverlay_project_options
 	Threads::Threads
 	${CMAKE_DL_LIBS}
 
@@ -268,6 +270,35 @@ if (WIN32)
     )
 endif()
 
+# ── Install rules (for `cmake --install` / CPack packaging) ────────────────────────────────
+# Mirrors the POST_BUILD copy list above, but into a real install tree rather than the build
+# output directory, so packaging isn't coupled to build-tree layout.
+include(GNUInstallDirs)
+
+install(TARGETS ${project}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(DIRECTORY bindings/ DESTINATION ${CMAKE_INSTALL_BINDIR}/bindings)
+install(DIRECTORY qml/      DESTINATION ${CMAKE_INSTALL_BINDIR}/qml)
+install(FILES qoverlay.vrmanifest DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+if (WIN32)
+    install(FILES "${_openvr_dll}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    # Deploy the Qt runtime against the staged install tree (not the build tree), so a
+    # packaged install is self-contained independent of whichever machine built it.
+    install(CODE "
+        execute_process(COMMAND \"${WINDEPLOYQT_EXECUTABLE}\"
+            ${WINDEPLOYQT_MODE}
+            --no-translations
+            --no-opengl-sw
+            \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/$<TARGET_FILE_NAME:${project}>\"
+        )
+    ")
+else ()
+    install(FILES $<TARGET_FILE:OpenVR::OpenVR> DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif ()
+
 # ── Keyboard tester tool (Windows) ──────────────────────────────────────────────────────────
 # A small desktop GUI that loads the real qml/Keyboard.qml and drives it with the mouse, so
 # the VR keyboard's layout/behaviour can be iterated without entering VR. Built beside the
@@ -284,6 +315,7 @@ if (WIN32)
     target_compile_definitions(keyboard_tester PRIVATE
         "KB_QML_FILE=\"${CMAKE_CURRENT_SOURCE_DIR}/qml/Keyboard.qml\"")
     target_link_libraries(keyboard_tester PRIVATE
+        qoverlay_project_options
         Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Widgets Qt6::QuickWidgets
         user32
     )

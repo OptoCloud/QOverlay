@@ -1,5 +1,7 @@
 #include "vr/grab_indicator.h"
 
+#include "vr/conversion.h"
+
 #include <cmath>
 
 #include <QImage>
@@ -90,11 +92,7 @@ void QOverlay::VR::GrabIndicator::Show(const glm::mat4& overlayTransform, bool s
 	// Same pose as the overlay, nudged a touch toward the viewer (the overlay's +Z front).
 	glm::mat4 m = overlayTransform;
 	m[3] += glm::vec4(glm::vec3(m[2]) * 0.02f, 0.0f);
-	vr::HmdMatrix34_t mat = {};
-	mat.m[0][0] = m[0][0]; mat.m[1][0] = m[0][1]; mat.m[2][0] = m[0][2];
-	mat.m[0][1] = m[1][0]; mat.m[1][1] = m[1][1]; mat.m[2][1] = m[1][2];
-	mat.m[0][2] = m[2][0]; mat.m[1][2] = m[2][1]; mat.m[2][2] = m[2][2];
-	mat.m[0][3] = m[3][0]; mat.m[1][3] = m[3][1]; mat.m[2][3] = m[3][2];
+	vr::HmdMatrix34_t mat = QOverlay::VR::Conversion::ToHmdMat(m);
 	overlay->SetOverlayTransformAbsolute(m_handle, vr::TrackingUniverseStanding, &mat);
 
 	if (!m_visible) {

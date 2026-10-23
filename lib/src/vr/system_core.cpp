@@ -6,17 +6,16 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QStandardPaths>
 
 #include <fmt/core.h>
 #include <openvr.h>
 
+namespace {
 vr::IVRSystem* s_vrSystem;
+}
 
-// Registers the application manifest with SteamVR and identifies this running
-// process against it. This gives the app a stable app key so its actions show up
-// (with a persistent, per-app binding set) in the SteamVR controller binding UI.
-// Best-effort: a failure here is non-fatal, bindings still work via the action
-// manifest loaded in Input::Initialize.
 // Backslash-escape a Windows path so it can be embedded in a JSON string literal.
 static std::string JsonPath(const QString& path) {
 	QString native = QDir::toNativeSeparators(path);
@@ -24,6 +23,11 @@ static std::string JsonPath(const QString& path) {
 	return native.toStdString();
 }
 
+// Registers the application manifest with SteamVR and identifies this running
+// process against it. This gives the app a stable app key so its actions show up
+// (with a persistent, per-app binding set) in the SteamVR controller binding UI.
+// Best-effort: a failure here is non-fatal, bindings still work via the action
+// manifest loaded in Input::Initialize.
 static void RegisterApplicationManifest(const QOverlay::VR::AppIdentity& identity) {
 	auto apps = vr::VRApplications();
 	if (apps == nullptr) {
@@ -57,7 +61,9 @@ static void RegisterApplicationManifest(const QOverlay::VR::AppIdentity& identit
 		"}}\n",
 		identity.appKey, exePath, actionsPath, identity.appName);
 
-	const QString genPath = QDir(appDir).filePath(QStringLiteral("qoverlaylib.generated.vrmanifest"));
+	const QString genPath = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+		.filePath(QStringLiteral("qoverlaylib.generated.vrmanifest"));
+	QDir().mkpath(QFileInfo(genPath).absolutePath());
 	{
 		QFile file(genPath);
 		if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

@@ -25,24 +25,29 @@ if (VERBOSE)
   set (CMAKE_VERBOSE_MAKEFILE ON)
 endif ()
 
+# Compiler flags, collected on an INTERFACE library (rather than add_compile_options(),
+# which would apply them globally, including to third-party dependencies pulled in via
+# add_subdirectory/FetchContent). Targets opt in with
+# target_link_libraries(<target> PRIVATE qoverlay_project_options).
+add_library(qoverlay_project_options INTERFACE)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(qoverlay_project_options INTERFACE
+    "$<$<CONFIG:Release>:-O3;-g0>"
+    "$<$<NOT:$<CONFIG:Release>>:-Wall;-Wextra;-Wpedantic;-O0;-g3>"
+  )
+elseif (MSVC)
+  target_compile_options(qoverlay_project_options INTERFACE
+    "$<$<CONFIG:Release>:/MD;/DEBUG:NONE;/O2>"
+    "$<$<NOT:$<CONFIG:Release>>:/Wall;/Od>"
+  )
+else ()
+  message (FATAL_ERROR "Unsupported compiler")
+endif ()
+
 if (${CMAKE_BUILD_TYPE} STREQUAL "Release")
   set (BUILD_TYPE "rel")
-  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    string (APPEND CMAKE_CXX_FLAGS " -O3 -g0")
-  elseif (MSVC)
-    string (APPEND CMAKE_CXX_FLAGS " /MD /DEBUG:NONE /O2")
-  else ()
-    message (FATAL_ERROR "Unsupported compiler")
-  endif ()
 else ()
   set (BUILD_TYPE "dbg")
-  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -O0 -g3")
-  elseif (MSVC)
-	set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Wall /Od")
-  else ()
-    message (FATAL_ERROR "Unsupported compiler")
-  endif ()
 endif ()
 
 # Enable standard C++ exception handling on MSVC. Qt and C++/WinRT both throw (e.g.
@@ -52,5 +57,5 @@ endif ()
 # thrown exception can bypass our catches and abort — exactly the crash we hardened
 # against. Assume extern "C" functions never throw (the 'c').
 if (MSVC)
-  string (APPEND CMAKE_CXX_FLAGS " /EHsc")
+  target_compile_options(qoverlay_project_options INTERFACE "/EHsc")
 endif ()

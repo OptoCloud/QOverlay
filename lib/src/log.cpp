@@ -55,7 +55,7 @@ const char* LevelName(QOverlay::LogLevel level) {
 
 // Route Qt's own diagnostics (incl. QML engine errors) into the same log.
 void ForwardQtMessage(QtMsgType type, const QMessageLogContext& ctx, const QString& msg) {
-	const QString cat = ctx.category ? QString("qt/%1").arg(ctx.category) : QStringLiteral("qt");
+	const QString cat = ctx.category ? QString::fromStdString(fmt::format("qt/{}", ctx.category)) : QStringLiteral("qt");
 	const QString text = cat + ": " + msg;
 	switch (type) {
 		case QtDebugMsg:    WriteLine("debug", text); break;

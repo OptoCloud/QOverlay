@@ -8,3 +8,6 @@ CMakeLists.txt.user
 .claude/settings.local.json
 # Planning doc - not tracked (README/LICENSE/docs/ excepted)
 PLAN.md
+
+# Session review-artifact scratch dir, not tracked
+tmp/

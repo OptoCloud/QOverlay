@@ -1,8 +1,9 @@
 #include "backends/windows/wgc_source.h"
 
+#include "backends/windows/qt_key_to_vk.h"
 #include "input/desktop_input.h"
-
-#include <fmt/core.h>
+#include "log.h"
+#include "vr/overlay_submit_log.h"
 
 #include <algorithm>
 #include <array>
@@ -66,35 +67,6 @@ WPARAM ButtonMask(Qt::MouseButton b) {
 	}
 }
 
-// Windows virtual-key for the non-printable Qt keys a virtual keyboard emits (for posting
-// WM_KEYDOWN/WM_KEYUP to a specific window). Printable text goes through WM_CHAR instead.
-WORD QtKeyToVk(Qt::Key key) {
-	if (key >= Qt::Key_F1 && key <= Qt::Key_F12) return static_cast<WORD>(VK_F1 + (key - Qt::Key_F1));
-	switch (key) {
-		case Qt::Key_Return:
-		case Qt::Key_Enter:      return VK_RETURN;
-		case Qt::Key_Backspace:  return VK_BACK;
-		case Qt::Key_Tab:        return VK_TAB;
-		case Qt::Key_Escape:     return VK_ESCAPE;
-		case Qt::Key_Delete:     return VK_DELETE;
-		case Qt::Key_Insert:     return VK_INSERT;
-		case Qt::Key_Left:       return VK_LEFT;
-		case Qt::Key_Right:      return VK_RIGHT;
-		case Qt::Key_Up:         return VK_UP;
-		case Qt::Key_Down:       return VK_DOWN;
-		case Qt::Key_Home:       return VK_HOME;
-		case Qt::Key_End:        return VK_END;
-		case Qt::Key_PageUp:     return VK_PRIOR;
-		case Qt::Key_PageDown:   return VK_NEXT;
-		case Qt::Key_Print:      return VK_SNAPSHOT;
-		case Qt::Key_ScrollLock: return VK_SCROLL;
-		case Qt::Key_Pause:      return VK_PAUSE;
-		case Qt::Key_Meta:       return VK_LWIN; // Windows key
-		case Qt::Key_Menu:       return VK_APPS; // context-menu key
-		default:                 return 0;
-	}
-}
-
 }
 
 using QOverlay::Capture::Win::WgcSource;
@@ -129,7 +101,7 @@ bool WgcSource::createDevice() {
 		m_device.put(), nullptr, m_context.put());
 
 	if (FAILED(hr)) {
-		fmt::print("WgcSource: D3D11CreateDevice failed (0x{:08x})\n", static_cast<unsigned>(hr));
+		LOG_ERROR("WgcSource: D3D11CreateDevice failed (0x{:08x})", static_cast<unsigned>(hr));
 		return false;
 	}
 	return true;
@@ -142,7 +114,7 @@ bool WgcSource::start() {
 		? m_pool.StartMonitor(m_monitor, m_device.get())
 		: m_pool.StartWindow(m_window, m_device.get());
 	if (!ok) {
-		fmt::print("WgcSource: failed to start capture\n");
+		LOG_ERROR("WgcSource: failed to start capture");
 		return false;
 	}
 
@@ -172,19 +144,10 @@ void WgcSource::submit(vr::VROverlayHandle_t overlay) {
 
 	if (!m_loggedSubmit && error == vr::VROverlayError_None) {
 		m_loggedSubmit = true;
-		fmt::print("WgcSource: first frame submitted ({}x{})\n", m_size.width(), m_size.height());
+		LOG_INFO("WgcSource: first frame submitted ({}x{})", m_size.width(), m_size.height());
 	}
 
-	if (error != vr::VROverlayError_None) {
-		if (m_submitErrors == 0 || (m_submitErrors % 100) == 0) {
-			fmt::print("WgcSource: SetOverlayTexture failed ({}x): {}\n",
-				m_submitErrors + 1, ov->GetOverlayErrorNameFromEnum(error));
-		}
-		++m_submitErrors;
-	} else if (m_submitErrors > 0) {
-		fmt::print("WgcSource: SetOverlayTexture recovered after {} failures\n", m_submitErrors);
-		m_submitErrors = 0;
-	}
+	QOverlay::VR::LogSubmitResult("WgcSource", ov, error, m_submitErrors);
 }
 
 bool WgcSource::overlayPixelToDesktop(const QPointF& pixel, int& outX, int& outY) const {
@@ -363,7 +326,7 @@ void WgcSource::injectKey(Qt::Key key, bool down) {
 
 	HWND target = (m_lastWndTarget != nullptr) ? m_lastWndTarget : m_window;
 	if (target == nullptr) return;
-	const WORD vk = QtKeyToVk(key);
+	const WORD vk = QOverlay::Input::Win::QtKeyToVk(key);
 	if (vk == 0) return;
 	PostMessageW(target, down ? WM_KEYDOWN : WM_KEYUP, vk, 0);
 }

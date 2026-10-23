@@ -1,12 +1,14 @@
 #include "backends/linux/x11_backend.h"
 
+#include "log.h"
+
+#include <fmt/core.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
 #include <QImage>
-
-#include <fmt/core.h>
 
 // Xlib is included only in the .cpp so its macros don't leak into Qt headers.
 #include <X11/Xlib.h>
@@ -23,7 +25,12 @@ using QOverlay::Capture::CaptureSurface;
 using QOverlay::Capture::Linux::X11Target;
 
 QString HandleId(const char* prefix, unsigned long v) {
-	return QString("%1:0x%2").arg(prefix).arg(v, 0, 16);
+	return QString::fromStdString(fmt::format("{}:0x{:x}", prefix, v));
+}
+
+// Qt mouse button -> XTest button code (1=left, 2=middle, 3=right; 0 = unsupported/none).
+unsigned int QtToXTestButton(Qt::MouseButton b) {
+	switch (b) { case Qt::LeftButton: return 1; case Qt::MiddleButton: return 2; case Qt::RightButton: return 3; default: return 0; }
 }
 
 // Read a window's _NET_WM_NAME (UTF-8), falling back to WM_NAME.
@@ -144,12 +151,9 @@ void X11Source::injectMouse(Qt::MouseButton button, const QPointF& overlayPixel)
 	// XTest is global: move the pointer, then press/release. (No per-window inject on X11.)
 	XTestFakeMotionEvent(m_display, -1, x, y, CurrentTime);
 
-	auto xbtn = [](Qt::MouseButton b) -> unsigned int {
-		switch (b) { case Qt::LeftButton: return 1; case Qt::MiddleButton: return 2; case Qt::RightButton: return 3; default: return 0; }
-	};
 	if (button != m_held) {
-		if (m_held != Qt::NoButton) XTestFakeButtonEvent(m_display, xbtn(m_held), False, CurrentTime);
-		if (button != Qt::NoButton) XTestFakeButtonEvent(m_display, xbtn(button), True, CurrentTime);
+		if (m_held != Qt::NoButton) XTestFakeButtonEvent(m_display, QtToXTestButton(m_held), False, CurrentTime);
+		if (button != Qt::NoButton) XTestFakeButtonEvent(m_display, QtToXTestButton(button), True, CurrentTime);
 		m_held = button;
 	}
 	XFlush(m_display);
@@ -157,10 +161,7 @@ void X11Source::injectMouse(Qt::MouseButton button, const QPointF& overlayPixel)
 
 void X11Source::mouseGone() {
 	if (m_held == Qt::NoButton) return;
-	auto xbtn = [](Qt::MouseButton b) -> unsigned int {
-		switch (b) { case Qt::LeftButton: return 1; case Qt::MiddleButton: return 2; case Qt::RightButton: return 3; default: return 0; }
-	};
-	XTestFakeButtonEvent(m_display, xbtn(m_held), False, CurrentTime);
+	XTestFakeButtonEvent(m_display, QtToXTestButton(m_held), False, CurrentTime);
 	m_held = Qt::NoButton;
 	XFlush(m_display);
 }
@@ -217,7 +218,7 @@ X11Backend::X11Backend(QObject* parent)
 	, m_display(XOpenDisplay(nullptr))
 {
 	if (m_display == nullptr) {
-		fmt::print("X11Backend: XOpenDisplay failed\n");
+		LOG_ERROR("X11Backend: XOpenDisplay failed");
 	}
 }
 
@@ -238,7 +239,7 @@ QList<QOverlay::Capture::CaptureSurface> X11Backend::enumerateSurfaces() {
 			if (crtc && crtc->mode != 0 && crtc->width > 0 && crtc->height > 0) {
 				X11Target t;
 				t.kind = CaptureSurface::Kind::Monitor;
-				t.id = QString("monitor:%1").arg(m_targets.size());
+				t.id = QString::fromStdString(fmt::format("monitor:{}", m_targets.size()));
 				t.title = QString("Display %1 (%2x%3)").arg(m_targets.size() + 1).arg(crtc->width).arg(crtc->height);
 				t.window = root;
 				t.x = crtc->x; t.y = crtc->y; t.w = static_cast<int>(crtc->width); t.h = static_cast<int>(crtc->height);
@@ -274,7 +275,7 @@ QList<QOverlay::Capture::CaptureSurface> X11Backend::enumerateSurfaces() {
 	}
 
 	QList<CaptureSurface> out;
-	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, t.kind });
+	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, QString(), t.kind });
 	return out;
 }
 

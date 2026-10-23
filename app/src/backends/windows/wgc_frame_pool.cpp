@@ -1,6 +1,6 @@
 #include "backends/windows/wgc_frame_pool.h"
 
-#include <fmt/core.h>
+#include "log.h"
 
 #include <dxgi.h>
 
@@ -53,7 +53,7 @@ bool WgcFramePool::StartMonitor(HMONITOR monitor, ID3D11Device* device) {
 			winrt::guid_of<winrt::GraphicsCaptureItem>(),
 			winrt::put_abi(item)));
 	} catch (const winrt::hresult_error& e) {
-		fmt::print("WgcFramePool: CreateForMonitor failed: {}\n", winrt::to_string(e.message()));
+		LOG_ERROR("WgcFramePool: CreateForMonitor failed: {}", winrt::to_string(e.message()));
 		return false;
 	}
 	return StartItem(item, device);
@@ -68,7 +68,7 @@ bool WgcFramePool::StartWindow(HWND window, ID3D11Device* device) {
 			winrt::guid_of<winrt::GraphicsCaptureItem>(),
 			winrt::put_abi(item)));
 	} catch (const winrt::hresult_error& e) {
-		fmt::print("WgcFramePool: CreateForWindow failed: {}\n", winrt::to_string(e.message()));
+		LOG_ERROR("WgcFramePool: CreateForWindow failed: {}", winrt::to_string(e.message()));
 		return false;
 	}
 	return StartItem(item, device);
@@ -83,12 +83,12 @@ bool WgcFramePool::StartItem(const winrt::GraphicsCaptureItem& item, ID3D11Devic
 	// Wrap our D3D11 device as a WinRT IDirect3DDevice so WGC renders frames onto it.
 	winrt::com_ptr<IDXGIDevice> dxgiDevice;
 	if (FAILED(m_device->QueryInterface(winrt::guid_of<IDXGIDevice>(), dxgiDevice.put_void()))) {
-		fmt::print("WgcFramePool: failed to get IDXGIDevice\n");
+		LOG_ERROR("WgcFramePool: failed to get IDXGIDevice");
 		return false;
 	}
 	winrt::com_ptr<::IInspectable> inspectable;
 	if (FAILED(CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.get(), inspectable.put()))) {
-		fmt::print("WgcFramePool: CreateDirect3D11DeviceFromDXGIDevice failed\n");
+		LOG_ERROR("WgcFramePool: CreateDirect3D11DeviceFromDXGIDevice failed");
 		return false;
 	}
 	m_winrtDevice = inspectable.as<winrt::IDirect3DDevice>();
@@ -111,11 +111,11 @@ bool WgcFramePool::StartItem(const winrt::GraphicsCaptureItem& item, ID3D11Devic
 		}
 	} catch (const winrt::hresult_error& e) {
 		// Not permitted on this build/policy — capture still works, border remains.
-		fmt::print("WgcFramePool: could not disable capture border: {}\n", winrt::to_string(e.message()));
+		LOG_WARN("WgcFramePool: could not disable capture border: {}", winrt::to_string(e.message()));
 	}
 
 	m_session.StartCapture();
-	fmt::print("WgcFramePool: started capture ({}x{})\n", m_width, m_height);
+	LOG_INFO("WgcFramePool: started capture ({}x{})", m_width, m_height);
 	return true;
 }
 
@@ -166,7 +166,7 @@ bool WgcFramePool::EnsureFrameTexture(std::uint32_t width, std::uint32_t height)
 	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
 	if (FAILED(m_device->CreateTexture2D(&desc, nullptr, m_frame.put()))) {
-		fmt::print("WgcFramePool: failed to create {}x{} frame texture\n", width, height);
+		LOG_ERROR("WgcFramePool: failed to create {}x{} frame texture", width, height);
 		return false;
 	}
 	return true;
@@ -208,7 +208,7 @@ bool WgcFramePool::Update() {
 		// Rate-limit: WGC can fail every tick during a device reset, and per-frame spam
 		// would drown the log.
 		if (m_updateErrors == 0 || (m_updateErrors % 100) == 0) {
-			fmt::print("WgcFramePool::Update: capture failed ({}x): {}\n",
+			LOG_ERROR("WgcFramePool::Update: capture failed ({}x): {}",
 				m_updateErrors + 1, winrt::to_string(e.message()));
 		}
 		++m_updateErrors;

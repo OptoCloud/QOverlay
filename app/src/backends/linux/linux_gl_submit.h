@@ -15,8 +15,8 @@ namespace QOverlay::Capture::Linux {
 // OpenGL texture (TextureType_OpenGL), so each capture source owns one of these: it keeps
 // a private QOpenGLContext + offscreen surface and a GL texture, and submits that texture
 // to the overlay. Two upload paths:
-//   - UploadRGBA(): CPU pixel upload (X11 XShm/XImage path).
-//   - AdoptTexture(): submit an already-GPU texture id (dmabuf→EGLImage→GL path for the
+//   - UploadAndSubmit(): CPU pixel upload (X11 XShm/XImage path).
+//   - SubmitTexture(): submit an already-GPU texture id (dmabuf→EGLImage→GL path for the
 //     PipeWire/wlroots backends), no copy.
 //
 // NOTE: Untested — written on Windows; needs bring-up on Linux (see docs/LINUX_BACKENDS.md).

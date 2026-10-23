@@ -12,23 +12,8 @@ Rectangle {
     border.color: "#2a2f3a"
     border.width: 1
 
-    component TextButton: Rectangle {
-        property string label: ""
-        property bool active: false
-        property color accent: "#2b3140"
-        property color accentHover: "#3a4152"
-        signal clicked()
-        implicitWidth: t.implicitWidth + 40
-        implicitHeight: 56
-        radius: 12
-        color: active ? "#274063"
-             : a.pressed ? Qt.lighter(accentHover, 1.15)
-             : (a.containsMouse ? accentHover : accent)
-        border.color: active ? "#4f9dff" : "#3a4250"
-        border.width: 1
-        Text { id: t; anchors.centerIn: parent; text: label; color: "#e6eaf2"; font.pixelSize: 20 }
-        MouseArea { id: a; anchors.fill: parent; hoverEnabled: true; preventStealing: true; onClicked: parent.clicked() }
-    }
+    // Shared with ControlPanel/ControlBar — app/qml/TextButton.qml. This panel's buttons use
+    // 40px pad, 56px height, 20px font, set per-instance below.
 
     Column {
         id: col
@@ -110,6 +95,7 @@ Rectangle {
             Repeater {
                 model: [ {k:"off", n:"Off"}, {k:"left", n:"Left"}, {k:"right", n:"Right"}, {k:"head", n:"Head"} ]
                 delegate: TextButton {
+                    horizontalPadding: 40; buttonHeight: 56; fontSize: 20
                     required property var modelData
                     label: modelData.n
                     active: (ctl ? ctl.lockTarget : "off") === modelData.k

@@ -28,6 +28,8 @@ add_library(QOverlayLib SHARED
     src/vr/math.cpp
     src/vr/overlay.h
     src/vr/overlay.cpp
+    src/vr/overlay_submit_log.h
+    src/vr/overlay_submit_log.cpp
     src/vr/pointer_cursor.h
     src/vr/pointer_cursor.cpp
     src/vr/qml_overlay_scene.h
@@ -52,6 +54,8 @@ target_include_directories(QOverlayLib
 )
 
 target_link_libraries(QOverlayLib
+    PRIVATE
+        qoverlay_project_options
     PUBLIC
         Qt6::Gui
         Qt6::OpenGL
@@ -120,7 +124,7 @@ configure_package_config_file(
 )
 write_basic_package_version_file(
     ${CMAKE_CURRENT_BINARY_DIR}/QOverlayLibConfigVersion.cmake
-    VERSION 0.1.0
+    VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion
 )
 install(FILES

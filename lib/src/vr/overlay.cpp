@@ -10,12 +10,49 @@
 
 #include <algorithm>
 
-#include <fmt/core.h>
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+
+namespace {
+// Grab-highlight tint for the held overlay's own texture: dimmed blue while grabbed, full
+// white (1,1,1) when released.
+constexpr float kGrabHighlightR = 0.55f;
+constexpr float kGrabHighlightG = 0.60f;
+constexpr float kGrabHighlightB = 0.72f;
+constexpr float kGrabHighlightNormalR = 1.0f;
+constexpr float kGrabHighlightNormalG = 1.0f;
+constexpr float kGrabHighlightNormalB = 1.0f;
+
+// Below this determinant magnitude, glm::inverse() on the transform would yield NaN/Inf.
+constexpr float kMatrixInverseSingularityEpsilon = 1e-6f;
+
+// Below this length, the flattened forward vector in LevelPitch() is too close to zero to
+// normalize reliably (overlay facing straight up/down).
+constexpr float kForwardUpParallelEpsilon = 1e-4f;
+
+bool IsInvertible(const glm::mat4& m) {
+	return std::abs(glm::determinant(m)) >= kMatrixInverseSingularityEpsilon;
+}
+}
+
+vr::IVROverlay* QOverlay::VR::Overlay::GetOverlayOrLog() {
+	auto* overlay = vr::VROverlay();
+	if (overlay == nullptr) {
+		LOG_ERROR("Failed to get IVROverlay interface");
+	}
+	return overlay;
+}
+
+vr::IVRSystem* QOverlay::VR::Overlay::GetVRSystemOrLog() {
+	auto* system = vr::VRSystem();
+	if (system == nullptr) {
+		LOG_ERROR("Failed to get IVRSystem interface");
+	}
+	return system;
+}
 
 QOverlay::VR::Overlay::Overlay(const QString& key, const QString& name, QObject* parent)
 	: Overlay(key, name, new QmlOverlayScene(), parent)
@@ -31,10 +68,8 @@ QOverlay::VR::Overlay::Overlay(const QString& key, const QString& name, IOverlay
 	, m_size(1.0f, 1.0f)
 	, m_width(1.0f)
 {
-	// VR Overlay
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay == nullptr) {
-		LOG_ERROR("Overlay '{}': failed to get IVROverlay interface", m_key.toStdString());
 		return;
 	}
 
@@ -49,10 +84,10 @@ QOverlay::VR::Overlay::Overlay(const QString& key, const QString& name, IOverlay
 
 	m_scene->SetHandle(m_handle);
 
-	// Disable OpenVR's built-in input — we handle raycasting ourselves
+	// Disable OpenVR's built-in input method so our own raycaster (system_input.cpp) can
+	// support multi-controller pointing/hover/drag that the stock input path doesn't expose.
 	overlay->SetOverlayInputMethod(m_handle, vr::VROverlayInputMethod_None);
 
-	// Register overlay
 	VRSystem::RegisterOverlay(this);
 }
 
@@ -61,10 +96,7 @@ QOverlay::VR::Overlay::~Overlay() {
 	VRSystem::UnregisterOverlay(this);
 
 	if (m_handle != vr::k_ulOverlayHandleInvalid) {
-		auto overlay = vr::VROverlay();
-		if (overlay == nullptr) {
-			fmt::print("Failed to get IVROverlay interface\n");
-		} else {
+		if (auto* overlay = GetOverlayOrLog(); overlay != nullptr) {
 			overlay->DestroyOverlay(m_handle);
 		}
 	}
@@ -82,7 +114,7 @@ bool QOverlay::VR::Overlay::Ok() const {
 void QOverlay::VR::Overlay::SetSource(const QUrl& source) {
 	auto* scene = dynamic_cast<QmlOverlayScene*>(m_scene.get());
 	if (scene == nullptr) {
-		fmt::print("Overlay::SetSource: scene is not a QmlOverlayScene\n");
+		LOG_ERROR("Overlay::SetSource: scene is not a QmlOverlayScene");
 		return;
 	}
 	scene->SetSource(source);
@@ -91,28 +123,22 @@ void QOverlay::VR::Overlay::SetSource(const QUrl& source) {
 void QOverlay::VR::Overlay::SetContextProperty(const QString& name, QObject* object) {
 	auto* scene = dynamic_cast<QmlOverlayScene*>(m_scene.get());
 	if (scene == nullptr) {
-		fmt::print("Overlay::SetContextProperty: scene is not a QmlOverlayScene\n");
+		LOG_ERROR("Overlay::SetContextProperty: scene is not a QmlOverlayScene");
 		return;
 	}
 	scene->SetContextProperty(name, object);
 }
 
 bool QOverlay::VR::Overlay::Visible() const {
-	const auto overlay = vr::VROverlay();
-	if (overlay == nullptr) {
-		fmt::print("Failed to get IVROverlay interface\n");
-		return false;
-	}
+	auto* overlay = GetOverlayOrLog();
+	if (overlay == nullptr) return false;
 
 	return overlay->IsOverlayVisible(m_handle);
 }
 
 void QOverlay::VR::Overlay::SetVisible(bool visible) {
-	const auto overlay = vr::VROverlay();
-	if (overlay == nullptr) {
-		fmt::print("Failed to get IVROverlay interface\n");
-		return;
-	}
+	auto* overlay = GetOverlayOrLog();
+	if (overlay == nullptr) return;
 
 	vr::EVROverlayError error;
 	if (visible) {
@@ -122,7 +148,7 @@ void QOverlay::VR::Overlay::SetVisible(bool visible) {
 	}
 
 	if (error != vr::VROverlayError_None) {
-		fmt::print("Failed to set overlay visibility: {}\n", overlay->GetOverlayErrorNameFromEnum(error));
+		LOG_ERROR("Failed to set overlay visibility: {}", overlay->GetOverlayErrorNameFromEnum(error));
 		return;
 	}
 
@@ -130,14 +156,11 @@ void QOverlay::VR::Overlay::SetVisible(bool visible) {
 }
 
 void QOverlay::VR::Overlay::SetWidth(float width) {
-	auto overlay = vr::VROverlay();
-	if (overlay == nullptr) {
-		fmt::print("Failed to get IVROverlay interface\n");
-		return;
-	}
+	auto* overlay = GetOverlayOrLog();
+	if (overlay == nullptr) return;
 
 	if (const vr::EVROverlayError error = overlay->SetOverlayWidthInMeters(m_handle, width); error != vr::VROverlayError_None) {
-		fmt::print("Failed to set overlay width: {}\n", overlay->GetOverlayErrorNameFromEnum(error));
+		LOG_ERROR("Failed to set overlay width: {}", overlay->GetOverlayErrorNameFromEnum(error));
 		return;
 	}
 
@@ -147,22 +170,19 @@ void QOverlay::VR::Overlay::SetWidth(float width) {
 }
 
 void QOverlay::VR::Overlay::SetOpacity(float alpha) {
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay == nullptr) return;
 	m_opacity = std::clamp(alpha, 0.0f, 1.0f);
 	overlay->SetOverlayAlpha(m_handle, m_opacity);
 }
 
 void QOverlay::VR::Overlay::SetTransformRelative(const Transform& offset, TrackedDevice::DeviceType deviceType) {
-	auto overlay = vr::VROverlay();
-	if (overlay == nullptr) {
-		fmt::print("Failed to get IVROverlay interface\n");
-		return;
-	}
+	auto* overlay = GetOverlayOrLog();
+	if (overlay == nullptr) return;
 
 	vr::TrackedDeviceIndex_t deviceIndex = TrackedDevice::GetIndex(deviceType);
 	if (deviceIndex == vr::k_unTrackedDeviceIndexInvalid) {
-		fmt::print("Failed to find tracked device\n");
+		LOG_ERROR("Failed to find tracked device");
 		return;
 	}
 
@@ -171,17 +191,17 @@ void QOverlay::VR::Overlay::SetTransformRelative(const Transform& offset, Tracke
 
 	vr::HmdMatrix34_t mat = offset.ToHmdMatrix();
 	if (const vr::EVROverlayError error = overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, deviceIndex, &mat); error != vr::VROverlayError_None) {
-		fmt::print("Failed to set overlay transform: {}\n", overlay->GetOverlayErrorNameFromEnum(error));
+		LOG_ERROR("Failed to set overlay transform: {}", overlay->GetOverlayErrorNameFromEnum(error));
 	}
 }
 
 bool QOverlay::VR::Overlay::GetTransformAbsolute(Transform& transform) const {
 	// If attached to a device, compute world transform from device pose * offset
 	if (m_attachedDevice != vr::k_unTrackedDeviceIndexInvalid) {
-		auto system = vr::VRSystem();
+		auto* system = GetVRSystemOrLog();
 		if (system == nullptr) return false;
 
-		std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses;
+		std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
 		system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, poses.data(), vr::k_unMaxTrackedDeviceCount);
 
 		if (!poses[m_attachedDevice].bPoseIsValid) return false;
@@ -193,7 +213,7 @@ bool QOverlay::VR::Overlay::GetTransformAbsolute(Transform& transform) const {
 	}
 
 	// Otherwise try the direct OpenVR call
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay == nullptr) return false;
 
 	vr::ETrackingUniverseOrigin origin;
@@ -207,7 +227,7 @@ bool QOverlay::VR::Overlay::GetTransformAbsolute(Transform& transform) const {
 }
 
 void QOverlay::VR::Overlay::SetTransformAbsolute(const Transform& transform) {
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay == nullptr) return;
 
 	vr::HmdMatrix34_t mat = transform.ToHmdMatrix();
@@ -218,20 +238,20 @@ void QOverlay::VR::Overlay::SetTransformAbsolute(const Transform& transform) {
 }
 
 void QOverlay::VR::Overlay::SetSortOrder(uint32_t order) {
-	if (auto overlay = vr::VROverlay()) {
+	if (auto* overlay = GetOverlayOrLog()) {
 		overlay->SetOverlaySortOrder(m_handle, order);
 	}
 }
 
 void QOverlay::VR::Overlay::SetGrabHighlight(bool on) {
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay == nullptr) return;
 	// Dim the held overlay's own texture (per-overlay); the shared symbol chip is handled
 	// by GrabIndicator, driven from the raycaster.
 	if (on) {
-		overlay->SetOverlayColor(m_handle, 0.55f, 0.60f, 0.72f);
+		overlay->SetOverlayColor(m_handle, kGrabHighlightR, kGrabHighlightG, kGrabHighlightB);
 	} else {
-		overlay->SetOverlayColor(m_handle, 1.0f, 1.0f, 1.0f);
+		overlay->SetOverlayColor(m_handle, kGrabHighlightNormalR, kGrabHighlightNormalG, kGrabHighlightNormalB);
 	}
 }
 
@@ -239,8 +259,14 @@ void QOverlay::VR::Overlay::BeginGrab(vr::TrackedDeviceIndex_t controllerIndex, 
 	Transform overlayTransform;
 	if (!GetTransformAbsolute(overlayTransform)) return;
 
+	const glm::mat4 controllerMat = controllerTransform.ToGlmMatrix();
+	if (!IsInvertible(controllerMat)) {
+		LOG_ERROR("Overlay '{}': BeginGrab: controller transform is singular, aborting grab", m_key.toStdString());
+		return;
+	}
+
 	// Store the offset: inverse(grabbing controller) * overlay
-	glm::mat4 controllerInverse = glm::inverse(controllerTransform.ToGlmMatrix());
+	glm::mat4 controllerInverse = glm::inverse(controllerMat);
 	m_grabOffset = controllerInverse * overlayTransform.ToGlmMatrix();
 	m_grabbed = true;
 	m_hasSmoothedGrab = false; // restart drag-smoothing so it doesn't slide in from a stale pose
@@ -261,12 +287,19 @@ void QOverlay::VR::Overlay::UpdateGrab(const Transform& controllerTransform) {
 	// rigid here). ds=0 → the raw pose (no smoothing).
 	const float ds = Config::Instance().DragSmoothing();
 	if (ds > 0.0f && m_hasSmoothedGrab) {
-		const glm::vec3 p = glm::mix(glm::vec3(newOverlayMat[3]), glm::vec3(m_smoothedGrab[3]), ds);
 		const glm::quat qNew = glm::quat_cast(glm::mat3(newOverlayMat));
 		const glm::quat qPrev = glm::quat_cast(glm::mat3(m_smoothedGrab));
-		glm::mat4 blended = glm::mat4_cast(glm::normalize(glm::slerp(qNew, qPrev, ds)));
-		blended[3] = glm::vec4(p, 1.0f);
-		newOverlayMat = blended;
+		// If the grab offset was derived from a near-singular pose (e.g. a transient
+		// tracking glitch during BeginGrab), the extracted quaternion can be NaN. Guard
+		// here so a single corrupted frame can't propagate NaN through the EMA state
+		// forever; just skip smoothing for this frame and use the raw pose instead.
+		const bool corrupted = glm::any(glm::isnan(qNew)) || glm::any(glm::isnan(qPrev));
+		if (!corrupted) {
+			const glm::vec3 p = glm::mix(glm::vec3(newOverlayMat[3]), glm::vec3(m_smoothedGrab[3]), ds);
+			glm::mat4 blended = glm::mat4_cast(glm::normalize(glm::slerp(qNew, qPrev, ds)));
+			blended[3] = glm::vec4(p, 1.0f);
+			newOverlayMat = blended;
+		}
 	}
 	m_smoothedGrab = newOverlayMat;
 	m_hasSmoothedGrab = true;
@@ -276,6 +309,7 @@ void QOverlay::VR::Overlay::UpdateGrab(const Transform& controllerTransform) {
 
 void QOverlay::VR::Overlay::PushGrabDistance(const glm::mat4& controllerWorld, const glm::vec3& worldDir, float meters) {
 	if (!m_grabbed) return;
+	if (!IsInvertible(controllerWorld)) return;
 	// Slide the overlay along the aim ray in world space, then express that move in the
 	// controller's local frame and add it to the grab offset so it stays attached while
 	// moving along where you point.
@@ -291,14 +325,18 @@ void QOverlay::VR::Overlay::EndGrab() {
 
 	// Re-attach to original controller with updated offset
 	if (m_savedAttachedDevice != vr::k_unTrackedDeviceIndexInvalid) {
-		auto system = vr::VRSystem();
+		auto* system = GetVRSystemOrLog();
 		if (system == nullptr) return;
 
-		std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses;
+		std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
 		system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, poses.data(), vr::k_unMaxTrackedDeviceCount);
 
 		if (poses[m_savedAttachedDevice].bPoseIsValid) {
 			glm::mat4 deviceMat = Conversion::ToGlmMat(poses[m_savedAttachedDevice].mDeviceToAbsoluteTracking);
+			if (!IsInvertible(deviceMat)) {
+				LOG_ERROR("Overlay '{}': EndGrab: device transform is singular, leaving attachment detached", m_key.toStdString());
+				return;
+			}
 
 			Transform overlayTransform;
 			if (GetTransformAbsolute(overlayTransform)) {
@@ -307,7 +345,7 @@ void QOverlay::VR::Overlay::EndGrab() {
 				m_relativeOffset = Transform(newOffset);
 				m_attachedDevice = m_savedAttachedDevice;
 
-				auto overlay = vr::VROverlay();
+				auto* overlay = GetOverlayOrLog();
 				if (overlay != nullptr) {
 					vr::HmdMatrix34_t mat = m_relativeOffset.ToHmdMatrix();
 					overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, m_attachedDevice, &mat);
@@ -324,7 +362,7 @@ void QOverlay::VR::Overlay::AttachToDevice(TrackedDevice::DeviceType deviceType,
 	m_attachedDevice = deviceIndex;
 	m_relativeOffset = offset;
 
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay != nullptr) {
 		vr::HmdMatrix34_t mat = offset.ToHmdMatrix();
 		overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, deviceIndex, &mat);
@@ -340,7 +378,7 @@ void QOverlay::VR::Overlay::LevelPitch() {
 	// facing, then rebuild an orthonormal basis with world-up as the overlay's up.
 	glm::vec3 fwd = -glm::vec3(m[2]);
 	fwd.y = 0.0f;
-	if (glm::length(fwd) < 1e-4f) return; // facing straight up/down — nothing sensible to level to
+	if (glm::length(fwd) < kForwardUpParallelEpsilon) return; // facing straight up/down — nothing sensible to level to
 	fwd = glm::normalize(fwd);
 
 	const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
@@ -363,19 +401,23 @@ void QOverlay::VR::Overlay::LockToDevice(TrackedDevice::DeviceType deviceType) {
 	Transform world;
 	if (!GetTransformAbsolute(world)) return;
 
-	auto system = vr::VRSystem();
+	auto* system = GetVRSystemOrLog();
 	if (system == nullptr) return;
-	std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses;
+	std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
 	system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, poses.data(), vr::k_unMaxTrackedDeviceCount);
 	if (!poses[deviceIndex].bPoseIsValid) return;
 
 	// Offset = inverse(device) * overlay-world, so the overlay stays exactly where it is now
 	// and thereafter rides the device.
 	const glm::mat4 deviceMat = Conversion::ToGlmMat(poses[deviceIndex].mDeviceToAbsoluteTracking);
+	if (!IsInvertible(deviceMat)) {
+		LOG_ERROR("Overlay '{}': LockToDevice: device transform is singular, aborting lock", m_key.toStdString());
+		return;
+	}
 	m_relativeOffset = Transform(glm::inverse(deviceMat) * world.ToGlmMatrix());
 	m_attachedDevice = deviceIndex;
 
-	if (auto overlay = vr::VROverlay()) {
+	if (auto* overlay = GetOverlayOrLog()) {
 		vr::HmdMatrix34_t mat = m_relativeOffset.ToHmdMatrix();
 		overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, deviceIndex, &mat);
 	}
@@ -395,7 +437,7 @@ void QOverlay::VR::Overlay::Unlock() {
 void QOverlay::VR::Overlay::MirrorToDevice(TrackedDevice::DeviceType deviceType) {
 	vr::TrackedDeviceIndex_t newDeviceIndex = TrackedDevice::GetIndex(deviceType);
 	if (newDeviceIndex == vr::k_unTrackedDeviceIndexInvalid) {
-		fmt::print("MirrorToDevice: target device not found\n");
+		LOG_ERROR("MirrorToDevice: target device not found");
 		return;
 	}
 
@@ -415,12 +457,12 @@ void QOverlay::VR::Overlay::MirrorToDevice(TrackedDevice::DeviceType deviceType)
 
 	m_attachedDevice = newDeviceIndex;
 
-	auto overlay = vr::VROverlay();
+	auto* overlay = GetOverlayOrLog();
 	if (overlay != nullptr) {
 		vr::HmdMatrix34_t mat = m_relativeOffset.ToHmdMatrix();
 		auto err = overlay->SetOverlayTransformTrackedDeviceRelative(m_handle, newDeviceIndex, &mat);
 		if (err != vr::VROverlayError_None) {
-			fmt::print("MirrorToDevice: SetOverlayTransformTrackedDeviceRelative failed: {}\n",
+			LOG_ERROR("MirrorToDevice: SetOverlayTransformTrackedDeviceRelative failed: {}",
 				overlay->GetOverlayErrorNameFromEnum(err));
 		}
 	}

@@ -1,9 +1,9 @@
 #include "capture/backend_factory.h"
 #include "capture/capture_backend.h"
 
-#include <cstdlib>
+#include "log.h"
 
-#include <fmt/core.h>
+#include <cstdlib>
 
 #ifdef QOVERLAY_HAVE_X11
 #include "backends/linux/x11_backend.h"
@@ -26,32 +26,41 @@ QOverlay::Capture::ICaptureBackend* QOverlay::Capture::createCaptureBackend(QObj
 	const char* waylandDisplay = std::getenv("WAYLAND_DISPLAY");
 	const bool onWayland = (waylandDisplay != nullptr && waylandDisplay[0] != '\0');
 
+	// Try one backend: log + construct if isAvailable(), else return nullptr so the caller
+	// falls through to the next candidate. Collapses the repeated "if (isAvailable()) { log;
+	// return new Backend(parent); }" shape below into one call site per backend.
+	auto tryBackend = [parent](bool available, const char* logMessage, auto makeBackend) -> ICaptureBackend* {
+		if (!available) return nullptr;
+		LOG_INFO("QOverlay capture backend: {}", logMessage);
+		return makeBackend(parent);
+	};
+
 	if (onWayland) {
 #ifdef QOVERLAY_HAVE_WLROOTS
-		if (Linux::WlrootsBackend::isAvailable()) {
-			fmt::print("QOverlay capture backend: wlroots (direct, no portal)\n");
-			return new Linux::WlrootsBackend(parent);
+		if (auto* b = tryBackend(Linux::WlrootsBackend::isAvailable(), "wlroots (direct, no portal)",
+				[](QObject* p) -> ICaptureBackend* { return new Linux::WlrootsBackend(p); })) {
+			return b;
 		}
 #endif
 #ifdef QOVERLAY_HAVE_PORTAL
-		if (Linux::PortalBackend::isAvailable()) {
-			fmt::print("QOverlay capture backend: xdg-desktop-portal + PipeWire\n");
-			return new Linux::PortalBackend(parent);
+		if (auto* b = tryBackend(Linux::PortalBackend::isAvailable(), "xdg-desktop-portal + PipeWire",
+				[](QObject* p) -> ICaptureBackend* { return new Linux::PortalBackend(p); })) {
+			return b;
 		}
 #endif
-		fmt::print("No Wayland capture path: compositor advertises no wlr-screencopy and no "
-		           "usable xdg ScreenCast portal is present. Capture unavailable.\n");
+		LOG_ERROR("No Wayland capture path: compositor advertises no wlr-screencopy and no "
+		           "usable xdg ScreenCast portal is present. Capture unavailable.");
 		return nullptr;
 	}
 
 #ifdef QOVERLAY_HAVE_X11
-	if (Linux::X11Backend::isAvailable()) {
-		fmt::print("QOverlay capture backend: X11 (direct, no portal)\n");
-		return new Linux::X11Backend(parent);
+	if (auto* b = tryBackend(Linux::X11Backend::isAvailable(), "X11 (direct, no portal)",
+			[](QObject* p) -> ICaptureBackend* { return new Linux::X11Backend(p); })) {
+		return b;
 	}
 #endif
 
-	fmt::print("No usable capture backend (XDG_SESSION_TYPE={}).\n", sessionType ? sessionType : "unknown");
+	LOG_ERROR("No usable capture backend (XDG_SESSION_TYPE={}).", sessionType ? sessionType : "unknown");
 	return nullptr;
 }
 

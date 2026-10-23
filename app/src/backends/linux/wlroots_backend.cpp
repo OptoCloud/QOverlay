@@ -1,10 +1,10 @@
 #include "backends/linux/wlroots_backend.h"
 
+#include "log.h"
+
 #include <cstdlib>
 
 #include <QImage>
-
-#include <fmt/core.h>
 
 // SKELETON. The wlroots protocol wiring is documented here and stubbed. Bring-up steps and
 // dependencies are in docs/LINUX_BACKENDS.md. This file compiles only when the wlroots
@@ -32,7 +32,7 @@ bool WlrSource::start() {
 	// GL submission.
 	m_started = !m_size.isEmpty();
 	if (m_started) emit frameSizeChanged(m_size);
-	fmt::print("WlrSource: start() is a skeleton — no frames yet (see docs/LINUX_BACKENDS.md)\n");
+	LOG_WARN("WlrSource: start() is a skeleton — no frames yet (see docs/LINUX_BACKENDS.md)");
 	return m_started;
 }
 
@@ -94,7 +94,7 @@ QList<QOverlay::Capture::CaptureSurface> WlrootsBackend::enumerateSurfaces() {
 	// TODO(linux): one CaptureSurface per wl_output (monitor) and per foreign-toplevel
 	// handle (window). Populate m_targets with the wl_output*/toplevel handle.
 	QList<CaptureSurface> out;
-	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, t.kind });
+	for (const auto& t : m_targets) out.append(CaptureSurface{ t.id, t.title, QString(), t.kind });
 	return out;
 }
 

@@ -1,11 +1,11 @@
 #include "backends/linux/linux_gl_submit.h"
 
+#include "log.h"
+
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QSurfaceFormat>
-
-#include <fmt/core.h>
 
 #ifndef GL_BGRA
 #define GL_BGRA 0x80E1
@@ -42,7 +42,7 @@ bool GlSubmitter::ensureContext() {
 	m_ctx = new QOpenGLContext();
 	m_ctx->setFormat(format);
 	if (!m_ctx->create()) {
-		fmt::print("GlSubmitter: failed to create GL context\n");
+		LOG_ERROR("GlSubmitter: failed to create GL context");
 		delete m_ctx;
 		m_ctx = nullptr;
 		return false;

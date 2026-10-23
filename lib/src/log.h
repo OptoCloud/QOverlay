@@ -13,6 +13,13 @@ namespace QOverlay {
 
 enum class LogLevel { Debug, Info, Warning, Error };
 
+// Level convention: DEBUG for one-shot/verbose diagnostics not needed in normal operation;
+// INFO for "operation completed, noting what happened" (e.g. backend selected, overlay
+// spawned); WARNING for "completed with degraded capability or a fallback was used" (e.g.
+// no backend available, GPU fence timeout); ERROR for "operation failed outright" (e.g.
+// overlay creation failed, OpenVR call returned an error). Nothing above ERROR crashes the
+// app on its own — Guarded() below is what prevents a thrown exception from doing that.
+
 // Call once, right after the QGuiApplication is constructed. Returns the log file path.
 // `logFileBaseName` names the file under Qt's AppLocalDataLocation (which itself is
 // already namespaced by QCoreApplication::setApplicationName/setOrganizationName, set
@@ -29,6 +36,10 @@ inline void LogFmt(LogLevel level, fmt::format_string<Args...> fmtStr, Args&&...
 // Run `f` catching any exception, so it can't propagate. Use this to wrap the body of any
 // method invoked from QML / an event handler — Qt does not support C++ exceptions unwinding
 // through its event delivery and crashes if one does. `what` names the site for the log.
+//
+// Callers pass `[&]() { ... }` — capture-by-reference is safe here because `f` is invoked
+// synchronously, inside this call, and never stored or returned; the referenced locals are
+// still in scope for the lambda's entire lifetime.
 template <typename F>
 inline void Guarded(const char* what, F&& f) {
 	try {

@@ -1,12 +1,14 @@
 #include "config.h"
 
+#include "log.h"
+
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
 
-#include <fmt/core.h>
+#include <algorithm>
 
 QOverlay::Config& QOverlay::Config::Instance() {
 	static Config instance;
@@ -22,7 +24,7 @@ QString QOverlay::Config::configPath() const {
 bool QOverlay::Config::Load() {
 	QFile file(configPath());
 	if (!file.open(QIODevice::ReadOnly)) {
-		fmt::print("No config file found at {}, using defaults\n", configPath().toStdString());
+		LOG_WARN("No config file found at {}, using defaults", configPath().toStdString());
 		return false;
 	}
 
@@ -36,7 +38,7 @@ bool QOverlay::Config::Load() {
 	m_cursorSmoothing = static_cast<float>(obj.value("cursorSmoothing").toDouble(m_cursorSmoothing));
 	m_dragSmoothing = static_cast<float>(obj.value("dragSmoothing").toDouble(m_dragSmoothing));
 
-	fmt::print("Config loaded from {}\n", configPath().toStdString());
+	LOG_INFO("Config loaded from {}", configPath().toStdString());
 	return true;
 }
 
@@ -50,12 +52,12 @@ bool QOverlay::Config::Save() const {
 
 	QFile file(configPath());
 	if (!file.open(QIODevice::WriteOnly)) {
-		fmt::print("Failed to save config to {}\n", configPath().toStdString());
+		LOG_ERROR("Failed to save config to {}", configPath().toStdString());
 		return false;
 	}
 
 	file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
-	fmt::print("Config saved to {}\n", configPath().toStdString());
+	LOG_INFO("Config saved to {}", configPath().toStdString());
 	return true;
 }
 
@@ -66,25 +68,33 @@ void QOverlay::Config::SetLeftHanded(bool left) {
 }
 
 void QOverlay::Config::SetClickThreshold(float threshold) {
-	m_clickThreshold = qBound(0.05f, threshold, 1.0f);
+	// 0.05 = 5% trigger pull (very sensitive, near-hair-trigger); 1.0 = full pull (nearly
+	// impossible to hit in practice, effectively "disabled"). Lower bound keeps a tiny dead
+	// zone so analog noise near 0 can't register spurious clicks.
+	m_clickThreshold = std::clamp(threshold, 0.05f, 1.0f);
 	Save();
 	emit Changed();
 }
 
 void QOverlay::Config::SetGrabThreshold(float threshold) {
-	m_grabThreshold = qBound(0.05f, threshold, 1.0f);
+	// Same rationale as SetClickThreshold: 0.05-1.0 spans "barely squeeze" to "full grip".
+	m_grabThreshold = std::clamp(threshold, 0.05f, 1.0f);
 	Save();
 	emit Changed();
 }
 
 void QOverlay::Config::SetCursorSmoothing(float amount) {
-	m_cursorSmoothing = qBound(0.0f, amount, 0.95f);
+	// 0.0 = no smoothing (cursor tracks the raw raycast hit instantly); 0.95 = heaviest
+	// smoothing we allow. 1.0 is deliberately excluded since an EMA factor of exactly 1.0
+	// never converges toward the new sample, effectively freezing the cursor.
+	m_cursorSmoothing = std::clamp(amount, 0.0f, 0.95f);
 	Save();
 	emit Changed();
 }
 
 void QOverlay::Config::SetDragSmoothing(float amount) {
-	m_dragSmoothing = qBound(0.0f, amount, 0.95f);
+	// Same rationale as SetCursorSmoothing.
+	m_dragSmoothing = std::clamp(amount, 0.0f, 0.95f);
 	Save();
 	emit Changed();
 }

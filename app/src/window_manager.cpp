@@ -9,6 +9,8 @@
 #include "vr/popup_overlay.h"
 #include "vr/transform.h"
 
+#include <fmt/core.h>
+
 #include <QBuffer>
 #include <QByteArray>
 #include <QCoreApplication>
@@ -20,7 +22,6 @@
 
 #include <algorithm>
 
-#include <fmt/core.h>
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/geometric.hpp>
@@ -50,9 +51,9 @@ QOverlay::WindowManager::WindowManager(QObject* parent)
 	, m_backend(Capture::createCaptureBackend(this))
 {
 	if (m_backend == nullptr) {
-		fmt::print("WindowManager: no capture backend available on this platform\n");
+		LOG_WARN("WindowManager: no capture backend available on this platform");
 	} else {
-		fmt::print("WindowManager: capture backend = {}\n", m_backend->name().toStdString());
+		LOG_INFO("WindowManager: capture backend = {}", m_backend->name().toStdString());
 	}
 	refresh();
 	refreshKeyboardLegends();
@@ -90,7 +91,7 @@ QVariantList QOverlay::WindowManager::availableSurfaces() const {
 		map["title"] = item.surface.title;
 		// Primary label: the app name, falling back to the title when unknown (e.g. monitors).
 		map["app"] = item.surface.appName.isEmpty() ? item.surface.title : item.surface.appName;
-		map["kind"] = KindString(item.surface.kind);
+		map["kind"] = item.surface.kindString();
 		map["preview"] = item.preview;
 		map["icon"] = item.icon;
 		list.append(map);
@@ -132,30 +133,46 @@ void QOverlay::WindowManager::addSurface(const QString& id) {
 	QTimer::singleShot(0, this, [this, id]() { spawnSurface(id); });
 }
 
+std::vector<QOverlay::WindowManager::Active>::iterator QOverlay::WindowManager::findActive(const QString& id, const char* what) {
+	const auto it = std::find_if(m_active.begin(), m_active.end(),
+		[&](const Active& a) { return a.id == id; });
+	if (it == m_active.end()) {
+		LOG_WARN("WindowManager: {}: unknown overlay id {}", what, id.toStdString());
+	}
+	return it;
+}
+
+// Shared prefix for all overlay registration keys so bar/capture overlays for the same
+// active entry are trivially recognizable in logs (e.g. "qoverlay.capture.overlay:3" vs
+// "qoverlay.bar.overlay:3").
+QString QOverlay::WindowManager::overlayKey(const char* kind, const QString& activeId) {
+	return QString::fromStdString(fmt::format("qoverlay.{}.{}", kind, activeId.toStdString()));
+}
+
 void QOverlay::WindowManager::spawnSurface(const QString& id) { Guarded("spawnSurface", [&]() {
 	if (m_backend == nullptr) return;
 
 	const auto it = std::find_if(m_available.begin(), m_available.end(),
 		[&](const AvailSurface& s) { return s.surface.id == id; });
 	if (it == m_available.end()) {
-		fmt::print("WindowManager: addSurface: unknown surface id {}\n", id.toStdString());
+		LOG_WARN("WindowManager: addSurface: unknown surface id {}", id.toStdString());
 		return;
 	}
 	const Capture::CaptureSurface surface = it->surface;
 
 	Capture::ICaptureSource* source = m_backend->createSource(id, nullptr);
 	if (source == nullptr) {
-		fmt::print("WindowManager: failed to create capture source for '{}'\n", surface.title.toStdString());
+		LOG_ERROR("WindowManager: failed to create capture source for '{}'", surface.title.toStdString());
 		return;
 	}
 
-	const QString activeId = QString("overlay:%1").arg(m_nextId++);
-	const QString key = QString("qoverlay.capture.%1").arg(activeId);
+	const QString activeId = QString::fromStdString(fmt::format("overlay:{}", m_nextId++));
+	const QString key = overlayKey("capture", activeId);
 
 	auto* scene = new VR::CaptureOverlayScene(source); // takes ownership of source
 	auto* overlay = new VR::Overlay(key, surface.title, scene, this);
 	if (!overlay->Ok()) {
-		fmt::print("WindowManager: failed to create overlay for '{}'\n", surface.title.toStdString());
+		LOG_ERROR("WindowManager: failed to create overlay for '{}'", surface.title.toStdString());
 		delete overlay; // deletes the scene, which deletes the source
 		return;
 	}
@@ -171,8 +188,8 @@ void QOverlay::WindowManager::spawnSurface(const QString& id) { Guarded("spawnSu
 	});
 
 	// Control bar overlay under this one: opacity / change source / delete.
-	auto* controls = new OverlayControls(this, activeId, surface.title, KindString(surface.kind));
-	auto* bar = new VR::Overlay(QString("qoverlay.bar.%1").arg(activeId), surface.title + " controls", this);
+	auto* controls = new OverlayControls(this, activeId, surface.title, surface.kindString());
+	auto* bar = new VR::Overlay(overlayKey("bar", activeId), surface.title + " controls", this);
 	if (bar->Ok()) {
 		controls->setParent(bar);        // lifetime tied to the bar
 		bar->SetGrabbable(false);        // it follows the overlay; not independently grabbable
@@ -191,7 +208,7 @@ void QOverlay::WindowManager::spawnSurface(const QString& id) { Guarded("spawnSu
 
 	m_active.push_back(Active{ activeId, id, surface.title, surface.kind, overlay, scene, source, bar, controls, 1.0f });
 	positionBar(m_active.back());
-	fmt::print("WindowManager: spawned {} overlay for '{}'\n", KindString(surface.kind).toStdString(), surface.title.toStdString());
+	LOG_INFO("WindowManager: spawned {} overlay for '{}'", surface.kindString().toStdString(), surface.title.toStdString());
 	emit activeOverlaysChanged();
 }); }
 
@@ -216,13 +233,12 @@ void QOverlay::WindowManager::destroyActive(Active& active) {
 }
 
 void QOverlay::WindowManager::closeOverlay(const QString& id) { Guarded("closeOverlay", [&]() {
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == id; });
+	const auto it = findActive(id, "closeOverlay");
 	if (it == m_active.end()) return;
 
 	destroyActive(*it);
 	m_active.erase(it);
-	fmt::print("WindowManager: closed overlay {}\n", id.toStdString());
+	LOG_INFO("WindowManager: closed overlay {}", id.toStdString());
 	emit activeOverlaysChanged();
 }); }
 
@@ -230,13 +246,12 @@ void QOverlay::WindowManager::closeAll() { Guarded("closeAll", [&]() {
 	if (m_active.empty()) return;
 	for (auto& active : m_active) destroyActive(active);
 	m_active.clear();
-	fmt::print("WindowManager: closed all overlays\n");
+	LOG_INFO("WindowManager: closed all overlays");
 	emit activeOverlaysChanged();
 }); }
 
 void QOverlay::WindowManager::setOverlayOpacity(const QString& id, float alpha) { Guarded("setOverlayOpacity", [&]() {
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == id; });
+	const auto it = findActive(id, "setOverlayOpacity");
 	if (it == m_active.end() || it->overlay == nullptr) return;
 	it->opacity = std::clamp(alpha, 0.0f, 1.0f);
 	it->overlay->SetOpacity(it->opacity);
@@ -250,14 +265,12 @@ void QOverlay::WindowManager::togglePopup(const QString& id, const QString& pane
 	// Same overlay + same panel already open → toggle it closed.
 	if (m_popupOwnerId == id && m_popupPanel == panel) { hidePopup(); return; }
 
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == id; });
+	const auto it = findActive(id, "togglePopup");
 	if (it == m_active.end() || it->controls == nullptr) return;
 
 	// Clear the highlight on whoever had it before (if it was a different overlay).
 	if (!m_popupOwnerId.isEmpty() && m_popupOwnerId != id) {
-		const auto prev = std::find_if(m_active.begin(), m_active.end(),
-			[&](const Active& a) { return a.id == m_popupOwnerId; });
+		const auto prev = findActive(m_popupOwnerId, "togglePopup");
 		if (prev != m_active.end() && prev->controls != nullptr) prev->controls->setOpenPanel(QString());
 	}
 
@@ -276,8 +289,7 @@ void QOverlay::WindowManager::togglePopup(const QString& id, const QString& pane
 
 void QOverlay::WindowManager::hidePopup() { Guarded("hidePopup", [&]() {
 	if (m_popupOwnerId.isEmpty()) { VR::PopupOverlay::Instance().Hide(); return; }
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == m_popupOwnerId; });
+	const auto it = findActive(m_popupOwnerId, "hidePopup");
 	if (it != m_active.end() && it->controls != nullptr) it->controls->setOpenPanel(QString());
 	m_popupOwnerId.clear();
 	m_popupPanel.clear();
@@ -285,16 +297,14 @@ void QOverlay::WindowManager::hidePopup() { Guarded("hidePopup", [&]() {
 }); }
 
 void QOverlay::WindowManager::setOverlayPitchLevel(const QString& id, bool level) { Guarded("setOverlayPitchLevel", [&]() {
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == id; });
+	const auto it = findActive(id, "setOverlayPitchLevel");
 	if (it == m_active.end()) return;
 	it->pitchLevel = level;
 	if (level && it->overlay != nullptr && !it->overlay->IsGrabbed()) it->overlay->LevelPitch();
 }); }
 
 void QOverlay::WindowManager::setOverlayLock(const QString& id, const QString& target) { Guarded("setOverlayLock", [&]() {
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == id; });
+	const auto it = findActive(id, "setOverlayLock");
 	if (it == m_active.end() || it->overlay == nullptr) return;
 	it->lockTarget = target;
 
@@ -311,8 +321,7 @@ void QOverlay::WindowManager::retargetOverlay(const QString& id) {
 }
 
 void QOverlay::WindowManager::retargetNow(const QString& id) { Guarded("retargetNow", [&]() {
-	const auto it = std::find_if(m_active.begin(), m_active.end(),
-		[&](const Active& a) { return a.id == id; });
+	const auto it = findActive(id, "retargetNow");
 	if (it == m_active.end() || m_backend == nullptr || m_available.empty()) return;
 
 	// Cycle to the next available surface after the current one.
@@ -326,8 +335,7 @@ void QOverlay::WindowManager::retargetNow(const QString& id) { Guarded("retarget
 void QOverlay::WindowManager::retargetOverlayTo(const QString& id, const QString& surfaceId) {
 	// Called from a control-bar click; defer to stay out of QML event delivery (see addSurface).
 	QTimer::singleShot(0, this, [this, id, surfaceId]() { Guarded("retargetOverlayTo", [&]() {
-		const auto it = std::find_if(m_active.begin(), m_active.end(),
-			[&](const Active& a) { return a.id == id; });
+		const auto it = findActive(id, "retargetOverlayTo");
 		if (it == m_active.end() || m_backend == nullptr) return;
 
 		int idx = -1;
@@ -335,7 +343,7 @@ void QOverlay::WindowManager::retargetOverlayTo(const QString& id, const QString
 			if (m_available[i].surface.id == surfaceId) { idx = i; break; }
 		}
 		if (idx < 0) {
-			fmt::print("WindowManager: retargetOverlayTo: unknown surface id {}\n", surfaceId.toStdString());
+			LOG_WARN("WindowManager: retargetOverlayTo: unknown surface id {}", surfaceId.toStdString());
 			return;
 		}
 		applyRetarget(*it, idx);
@@ -348,7 +356,7 @@ void QOverlay::WindowManager::applyRetarget(Active& active, int availableIndex) 
 
 	Capture::ICaptureSource* newSource = m_backend->createSource(target.id, nullptr);
 	if (newSource == nullptr) {
-		fmt::print("WindowManager: retarget failed to create source for '{}'\n", target.title.toStdString());
+		LOG_ERROR("WindowManager: retarget failed to create source for '{}'", target.title.toStdString());
 		return;
 	}
 
@@ -363,7 +371,7 @@ void QOverlay::WindowManager::applyRetarget(Active& active, int availableIndex) 
 	active.title = target.title;
 	active.kind = target.kind;
 	if (active.controls != nullptr) active.controls->setTitle(target.title);
-	fmt::print("WindowManager: retargeted overlay {} -> '{}'\n", active.id.toStdString(), target.title.toStdString());
+	LOG_INFO("WindowManager: retargeted overlay {} -> '{}'", active.id.toStdString(), target.title.toStdString());
 	emit activeOverlaysChanged();
 }
 

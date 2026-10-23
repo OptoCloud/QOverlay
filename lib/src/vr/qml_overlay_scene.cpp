@@ -1,6 +1,7 @@
 #include "vr/qml_overlay_scene.h"
 
 #include "log.h"
+#include "vr/overlay_submit_log.h"
 
 #include <QCoreApplication>
 #include <QMouseEvent>
@@ -19,7 +20,7 @@
 #include <QQuickWindow>
 #include <QSurfaceFormat>
 
-#include <fmt/core.h>
+#include <memory>
 
 #ifndef GL_RGBA8
 #define GL_RGBA8 0x8058
@@ -32,6 +33,12 @@
 #endif
 #ifndef GL_SYNC_FLUSH_COMMANDS_BIT
 #define GL_SYNC_FLUSH_COMMANDS_BIT 0x00000001
+#endif
+#ifndef GL_TIMEOUT_EXPIRED
+#define GL_TIMEOUT_EXPIRED 0x911B
+#endif
+#ifndef GL_WAIT_FAILED
+#define GL_WAIT_FAILED 0x911D
 #endif
 
 namespace {
@@ -49,8 +56,8 @@ constexpr GLuint64 kFenceTimeoutNs = 1'000'000'000ull; // 1 s
 // never destroyed — tearing a QQmlEngine down during static destruction, after the app is
 // gone, is unsafe; the OS reclaims it at process exit.
 QQmlEngine* SharedQmlEngine() {
-	static QQmlEngine* engine = new QQmlEngine();
-	return engine;
+	static std::unique_ptr<QQmlEngine> engine = std::make_unique<QQmlEngine>();
+	return engine.get();
 }
 }
 
@@ -303,7 +310,11 @@ void QOverlay::VR::QmlOverlayScene::renderVR() {
 	// is from two frames ago and has long completed, so the wait returns immediately — it just
 	// guarantees the GPU is done with the buffer we're about to render into.
 	if (m_fences[i] != nullptr) {
-		ef->glClientWaitSync(static_cast<GLsync>(m_fences[i]), GL_SYNC_FLUSH_COMMANDS_BIT, kFenceTimeoutNs);
+		const GLenum waitResult = ef->glClientWaitSync(static_cast<GLsync>(m_fences[i]), GL_SYNC_FLUSH_COMMANDS_BIT, kFenceTimeoutNs);
+		if (waitResult == GL_TIMEOUT_EXPIRED || waitResult == GL_WAIT_FAILED) {
+			LOG_WARN("QmlOverlayScene: GPU fence wait on buffer {} did not complete in time (result=0x{:04x}); "
+				"reusing the buffer anyway, which may submit a partially-rendered texture", i, static_cast<unsigned>(waitResult));
+		}
 		ef->glDeleteSync(static_cast<GLsync>(m_fences[i]));
 		m_fences[i] = nullptr;
 	}
@@ -321,13 +332,18 @@ void QOverlay::VR::QmlOverlayScene::renderVR() {
 	// OpenVR reads a finished texture on its own context), not until the entire GPU pipeline
 	// drains. GL_SYNC_FLUSH_COMMANDS_BIT flushes the fence so it's guaranteed to be reached.
 	GLsync fence = ef->glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+	// Store the fence into m_fences immediately so it's always tracked and reclaimed on the
+	// next renderVR() call for this buffer, even if a future change adds an early return
+	// below (e.g. around diagnostics/logging) — nothing can "lose" this handle between here
+	// and the end of the function.
+	m_fences[i] = fence;
 	ef->glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, kFenceTimeoutNs);
 
 	// One-shot diagnostics: with QRhi on our context, errAfterRender should be 0x0000.
 	if (!m_diagLogged) {
 		m_diagLogged = true;
 		const GLenum errAfterRender = f->glGetError();
-		fmt::print("QmlOverlayScene: submit diag — texId={} size={}x{} errBefore=0x{:04x} errAfterRender=0x{:04x} ctxValid={}\n",
+		LOG_DEBUG("QmlOverlayScene: submit diag — texId={} size={}x{} errBefore=0x{:04x} errAfterRender=0x{:04x} ctxValid={}",
 			m_textures[i], m_size.width(), m_size.height(),
 			static_cast<unsigned>(errBefore), static_cast<unsigned>(errAfterRender), m_glctx->isValid());
 	}
@@ -335,23 +351,11 @@ void QOverlay::VR::QmlOverlayScene::renderVR() {
 	m_tex.handle = reinterpret_cast<void*>(static_cast<quintptr>(m_textures[i]));
 	const vr::EVROverlayError error = overlay->SetOverlayTexture(m_handle, &m_tex);
 
-	// Keep the fence with the buffer; reclaimed above the next time this buffer is reused.
-	m_fences[i] = fence;
 	m_frameIndex ^= 1;
 
 	m_glctx->doneCurrent();
 
-	if (error != vr::VROverlayError_None) {
-		// Rate-limit: log the first failure, then every 100th, so the console stays usable.
-		if (m_submitErrors == 0 || (m_submitErrors % 100) == 0) {
-			fmt::print("QmlOverlayScene: SetOverlayTexture failed ({}x): {}\n",
-				m_submitErrors + 1, overlay->GetOverlayErrorNameFromEnum(error));
-		}
-		++m_submitErrors;
-	} else if (m_submitErrors > 0) {
-		fmt::print("QmlOverlayScene: SetOverlayTexture recovered after {} failures\n", m_submitErrors);
-		m_submitErrors = 0;
-	}
+	QOverlay::VR::LogSubmitResult("QmlOverlayScene", overlay, error, m_submitErrors);
 
 	// NOTE: The RHI renders top-left origin while OpenVR samples GL textures
 	// bottom-left; if the overlay appears vertically flipped on a headset, flip V

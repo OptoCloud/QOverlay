@@ -13,38 +13,9 @@ Rectangle {
     border.color: "#2a2f3a"
     border.width: 1
 
-    // Small pill button used throughout the panel.
-    component TextButton: Rectangle {
-        id: btn
-        property string label: ""
-        property color accent: "#2b3140"
-        property color accentHover: "#3a4152"
-        signal clicked()
-
-        implicitWidth: btnText.implicitWidth + 32
-        implicitHeight: 40
-        radius: 10
-        color: area.pressed ? Qt.lighter(accentHover, 1.15) : (area.containsMouse ? accentHover : accent)
-        border.color: "#3a4250"
-        border.width: 1
-
-        Text {
-            id: btnText
-            anchors.centerIn: parent
-            text: btn.label
-            color: "#e6eaf2"
-            font.pixelSize: 16
-        }
-        MouseArea {
-            id: area
-            anchors.fill: parent
-            hoverEnabled: true
-            // Keep the press grab so an enclosing Flickable (the preview grid / lists)
-            // can't reinterpret VR-pointer jitter as a scroll and swallow the click.
-            preventStealing: true
-            onClicked: btn.clicked()
-        }
-    }
+    // Small pill button used throughout the panel; shared with ControlBar/OptionsPanel as
+    // app/qml/TextButton.qml (default sizing below matches this panel's original 32px pad /
+    // 40px height / 16px font).
 
     // Labelled 0..1 slider used for the global smoothing settings. Tracks the drag locally and
     // only emits `moved` (which persists to config) on release, so a drag doesn't spam Save().

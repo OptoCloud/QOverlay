@@ -119,6 +119,13 @@ private:
 	void positionPopup(const Active& active);        // place the shared popup in front of the overlay
 	void destroyActive(Active& active);              // tear down overlay + bar
 
+	// Shared "find by id" lookup used by nearly every per-overlay operation (close, retarget,
+	// lock, opacity, popup, ...). Logs a warning and returns m_active.end() if not found, so
+	// callers can just check `it == m_active.end()` without duplicating the find_if + log.
+	std::vector<Active>::iterator findActive(const QString& id, const char* what);
+	// Builds the "qoverlay.<kind>.<activeId>" overlay registration key (kind is "capture" or "bar").
+	static QString overlayKey(const char* kind, const QString& activeId);
+
 	Capture::ICaptureBackend* m_backend = nullptr;
 	std::vector<AvailSurface> m_available;
 	std::vector<Active> m_active;

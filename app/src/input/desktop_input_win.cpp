@@ -1,5 +1,7 @@
 #include "input/desktop_input.h"
 
+#include "backends/windows/qt_key_to_vk.h"
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -78,37 +80,7 @@ void SendVirtualKey(WORD vk, bool down) {
 
 // Map the non-printable Qt keys a virtual keyboard emits to Windows virtual-key codes.
 // Printable characters go through TypeText (Unicode) instead, so only control keys here.
-WORD QtKeyToVk(Qt::Key key) {
-	if (key >= Qt::Key_F1 && key <= Qt::Key_F12) return static_cast<WORD>(VK_F1 + (key - Qt::Key_F1));
-	switch (key) {
-		case Qt::Key_Return:
-		case Qt::Key_Enter:      return VK_RETURN;
-		case Qt::Key_Backspace:  return VK_BACK;
-		case Qt::Key_Tab:        return VK_TAB;
-		case Qt::Key_Escape:     return VK_ESCAPE;
-		case Qt::Key_Space:      return VK_SPACE;
-		case Qt::Key_Delete:     return VK_DELETE;
-		case Qt::Key_Insert:     return VK_INSERT;
-		case Qt::Key_Left:       return VK_LEFT;
-		case Qt::Key_Right:      return VK_RIGHT;
-		case Qt::Key_Up:         return VK_UP;
-		case Qt::Key_Down:       return VK_DOWN;
-		case Qt::Key_Home:       return VK_HOME;
-		case Qt::Key_End:        return VK_END;
-		case Qt::Key_PageUp:     return VK_PRIOR;
-		case Qt::Key_PageDown:   return VK_NEXT;
-		case Qt::Key_Print:      return VK_SNAPSHOT;
-		case Qt::Key_ScrollLock: return VK_SCROLL;
-		case Qt::Key_Pause:      return VK_PAUSE;
-		case Qt::Key_Shift:      return VK_SHIFT;
-		case Qt::Key_Control:    return VK_CONTROL;
-		case Qt::Key_Alt:        return VK_MENU;
-		case Qt::Key_Meta:       return VK_LWIN;
-		case Qt::Key_Menu:       return VK_APPS;
-		case Qt::Key_CapsLock:   return VK_CAPITAL;
-		default:                 return 0;
-	}
-}
+// (Shared with the per-window WGC capture path — see backends/windows/qt_key_to_vk.h.)
 
 }
 

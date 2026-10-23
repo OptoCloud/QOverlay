@@ -1,6 +1,7 @@
 #include "vr/system.h"
 
 #include "config.h"
+#include "log.h"
 #include "vr/conversion.h"
 #include "vr/grab_indicator.h"
 #include "vr/pointer_cursor.h"
@@ -12,7 +13,6 @@
 #include "vr/transform.h"
 
 #include <openvr.h>
-#include <fmt/format.h>
 #include <glm/vec3.hpp>
 #include <glm/vec2.hpp>
 #include <glm/mat3x3.hpp>
@@ -20,10 +20,19 @@
 #include <glm/geometric.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
-#include <cmath>
-#include <vector>
 #include <array>
+#include <cmath>
+#include <limits>
+#include <mutex>
+#include <vector>
 
+// s_overlays: all currently-registered overlays. Populated by VRSystem::RegisterOverlay
+// (Overlay's constructor) and removed by UnregisterOverlay (Overlay's destructor, or
+// WindowManager closing an overlay at runtime). Read every tick by PollInput() for
+// raycasting. Guarded by s_overlaysMutex — defensively, since the VR poll/update path
+// currently runs entirely on one thread (the main-thread QTimer in app/main.cpp) so the lock
+// has zero contention today; it's here so a future multi-threaded change can't silently race.
+static std::mutex s_overlaysMutex;
 static std::vector<QOverlay::VR::Overlay*> s_overlays;
 
 // Per-controller interaction state
@@ -48,10 +57,12 @@ struct ControllerState {
 };
 static std::array<ControllerState, vr::k_unMaxTrackedDeviceCount> s_controllerState = {};
 
-// Two-handed resize. Everything is captured RELATIVE to the moment the second hand joins
-// so the overlay doesn't teleport: it keeps its position/size at that instant and only the
-// *change* in the hands' midpoint (translation) and separation (scale) is applied from
-// there. Orientation is held fixed at the captured value.
+// Two-handed resize state. Captured once, the instant the second hand joins an existing
+// one-handed grab on the same overlay (see "both hands grabbing the same overlay" in
+// PollInput()). Everything is relative to that instant so the overlay doesn't teleport:
+// only the *change* in hand separation (scale) and midpoint (translation) is applied;
+// orientation stays fixed at the captured value. `overlay` is null when inactive; cleared on
+// release (one hand remaining re-anchors via BeginGrab, see "leaving two-handed mode" below).
 static struct {
 	QOverlay::VR::Overlay* overlay = nullptr;
 	float baseDistance = 0.0f;
@@ -63,11 +74,14 @@ static struct {
 
 void QOverlay::VR::VRSystem::RegisterOverlay(QOverlay::VR::Overlay* overlay)
 {
+	// See s_overlaysMutex declaration above for why this lock exists.
+	std::lock_guard<std::mutex> lock(s_overlaysMutex);
 	s_overlays.push_back(overlay);
 }
 
 void QOverlay::VR::VRSystem::UnregisterOverlay(QOverlay::VR::Overlay* overlay)
 {
+	std::lock_guard<std::mutex> lock(s_overlaysMutex);
 	std::erase(s_overlays, overlay);
 
 	// An overlay can be destroyed at runtime (window manager close). Drop any dangling
@@ -155,39 +169,39 @@ void OnDeviceConnected(std::uint32_t index, const vr::TrackedDevicePose_t& pose)
 	switch (deviceClass)
 	{
 		case vr::TrackedDeviceClass_Invalid:
-			fmt::print("[DEVICE #{:0>2}] Invalid device class connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] Invalid device class connected", index);
 			return;
 		case vr::TrackedDeviceClass_HMD:
-			fmt::print("[DEVICE #{:0>2}] HMD connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] HMD connected", index);
 			break;
 		case vr::TrackedDeviceClass_Controller:
-			fmt::print("[DEVICE #{:0>2}] Controller connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] Controller connected", index);
 			break;
 		case vr::TrackedDeviceClass_GenericTracker:
-			fmt::print("[DEVICE #{:0>2}] GenericTracker connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] GenericTracker connected", index);
 			break;
 		case vr::TrackedDeviceClass_TrackingReference:
-			fmt::print("[DEVICE #{:0>2}] TrackingReference connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] TrackingReference connected", index);
 			break;
 		case vr::TrackedDeviceClass_DisplayRedirect:
-			fmt::print("[DEVICE #{:0>2}] DisplayRedirect connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] DisplayRedirect connected", index);
 			break;
 		default:
-			fmt::print("[DEVICE #{:0>2}] Unknown device class connected\n", index);
+			LOG_INFO("[DEVICE #{:0>2}] Unknown device class connected", index);
 			return;
 	}
 }
 void OnDeviceDisconnected(std::uint32_t index)
 {
-	fmt::print("[DEVICE #{:0>2}] Disconnected\n", index);
+	LOG_INFO("[DEVICE #{:0>2}] Disconnected", index);
 }
 void OnDevicePoseValidated(std::uint32_t index, const vr::TrackedDevicePose_t& pose)
 {
-	fmt::print("[DEVICE #{:0>2}] Pose validated\n", index);
+	LOG_INFO("[DEVICE #{:0>2}] Pose validated", index);
 }
 void OnDevicePoseInvalidated(std::uint32_t index)
 {
-	fmt::print("[DEVICE #{:0>2}] Pose invalidated\n", index);
+	LOG_INFO("[DEVICE #{:0>2}] Pose invalidated", index);
 }
 void OnDevicePoseUpdated(std::uint32_t index, const vr::TrackedDevicePose_t& pose)
 {
@@ -249,7 +263,7 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 
 	// Debug: log grip press with the analog grip value that triggered it
 	if (gripPressed && !state.wasGripPressed) {
-		fmt::print("[CTRL #{:0>2}] Grip pressed (gripValue={:.3f}, hovering: {})\n",
+		LOG_INFO("[CTRL #{:0>2}] Grip pressed (gripValue={:.3f}, hovering: {})",
 			controllerIndex, QOverlay::VR::Input::GripValue(hand), state.hoveredOverlay != nullptr ? "yes" : "no");
 	}
 
@@ -259,7 +273,7 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 		const float gv = QOverlay::VR::Input::GripValue(hand);
 		static int s_gripDbg = 0;
 		if (gv > 0.02f && (++s_gripDbg % 15 == 0)) {
-			fmt::print("[CTRL #{:0>2}] gripValue={:.3f} (threshold={:.2f})\n",
+			LOG_INFO("[CTRL #{:0>2}] gripValue={:.3f} (threshold={:.2f})",
 				controllerIndex, gv, QOverlay::Config::Instance().GrabThreshold());
 		}
 	}
@@ -323,7 +337,15 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 	glm::mat4 hitMat(1.0f); // hit overlay's absolute transform, for placing the cursor overlay
 	float closestDistance = std::numeric_limits<float>::max();
 
-	for (auto* overlay : s_overlays) {
+	// Snapshot under lock rather than holding the mutex through the whole raycast loop below
+	// (which calls into Overlay methods we can't prove are lock-free w.r.t. this mutex).
+	std::vector<QOverlay::VR::Overlay*> overlaysSnapshot;
+	{
+		std::lock_guard<std::mutex> lock(s_overlaysMutex);
+		overlaysSnapshot = s_overlays;
+	}
+
+	for (auto* overlay : overlaysSnapshot) {
 		// Grabbed overlays stay hittable so the OTHER controller can grab them too (for the
 		// two-handed resize); hover/click on a grabbed overlay is suppressed below.
 		if (!overlay->Ok() || !overlay->Visible()) continue;
@@ -377,7 +399,15 @@ static void ProcessControllerInteraction(QOverlay::VR::Input::Hand hand, std::ui
 			// last position. Skipped while the trigger is down so clicks land exactly where aimed.
 			const float cs = QOverlay::Config::Instance().CursorSmoothing();
 			if (cs > 0.0f && !triggerPressed) {
-				const bool jumped = glm::distance(hitPixel, state.cursorPixel) > 200.0f;
+				// A "jump" resets smoothing instead of blending toward the raw hit (so a
+				// deliberate re-aim across the overlay doesn't glide). Scale the threshold to
+				// the overlay's own pixel size rather than a fixed 200px, since that's ~39% of
+				// a 512px scene but under 5% of a 4K one.
+				const QSize hitSceneSize = hitOverlay->Scene()->Size();
+				const float sceneDiagonal = glm::length(glm::vec2(
+					static_cast<float>(hitSceneSize.width()), static_cast<float>(hitSceneSize.height())));
+				constexpr float kJumpFractionOfDiagonal = 0.1f;
+				const bool jumped = glm::distance(hitPixel, state.cursorPixel) > sceneDiagonal * kJumpFractionOfDiagonal;
 				if (state.cursorValid && state.hoveredOverlay == hitOverlay && !jumped) {
 					hitPixel = glm::mix(hitPixel, state.cursorPixel, cs);
 				}
@@ -442,8 +472,7 @@ void QOverlay::VR::VRSystem::PollInput()
 
 	constexpr std::size_t NDEVICES = vr::k_unMaxTrackedDeviceCount;
 
-	static_assert(s_devices.size() == s_prevDevices.size() && s_devices.size() == NDEVICES, "Device array size mismatch");
-	std::memcpy(s_prevDevices.data(), s_devices.data(), NDEVICES * sizeof(vr::TrackedDevicePose_t));
+	s_prevDevices = s_devices;
 
 	system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, s_devices.data(), NDEVICES);
 
@@ -510,12 +539,16 @@ void QOverlay::VR::VRSystem::PollInput()
 	{
 		const vr::TrackedDeviceIndex_t lIdx = TrackedDevice::GetIndex(TrackedDevice::DeviceType::ControllerLeft);
 		const vr::TrackedDeviceIndex_t rIdx = TrackedDevice::GetIndex(TrackedDevice::DeviceType::ControllerRight);
-		const bool valid = lIdx < NDEVICES && rIdx < NDEVICES
+		// Per-hand grab state must not depend on the OTHER hand's pose validity — otherwise a
+		// momentary tracking loss on one controller mid-resize would incorrectly clear the
+		// still-grabbing hand's overlay below, skipping the re-anchor step meant to prevent a
+		// jump (see the "leaving two-handed mode" branch).
+		QOverlay::VR::Overlay* lo = (lIdx < NDEVICES) ? s_controllerState[lIdx].grabbedOverlay : nullptr;
+		QOverlay::VR::Overlay* ro = (rIdx < NDEVICES) ? s_controllerState[rIdx].grabbedOverlay : nullptr;
+		const bool bothPosesValid = lIdx < NDEVICES && rIdx < NDEVICES
 			&& s_devices[lIdx].bPoseIsValid && s_devices[rIdx].bPoseIsValid;
-		QOverlay::VR::Overlay* lo = valid ? s_controllerState[lIdx].grabbedOverlay : nullptr;
-		QOverlay::VR::Overlay* ro = valid ? s_controllerState[rIdx].grabbedOverlay : nullptr;
 
-		if (valid && lo != nullptr && lo == ro) {
+		if (bothPosesValid && lo != nullptr && lo == ro) {
 			const glm::vec3 lp = glm::vec3(QOverlay::VR::Conversion::ToGlmMat(s_devices[lIdx].mDeviceToAbsoluteTracking)[3]);
 			const glm::vec3 rp = glm::vec3(QOverlay::VR::Conversion::ToGlmMat(s_devices[rIdx].mDeviceToAbsoluteTracking)[3]);
 			const float dist = glm::length(lp - rp);
@@ -550,9 +583,17 @@ void QOverlay::VR::VRSystem::PollInput()
 			// grab offset matches the new size/position (prevents a jump on release).
 			QOverlay::VR::Overlay* remaining = lo ? lo : ro;
 			const vr::TrackedDeviceIndex_t idx = lo ? lIdx : rIdx;
-			if (remaining != nullptr && idx < NDEVICES && s_devices[idx].bPoseIsValid) {
+			if (remaining != nullptr && idx < NDEVICES && s_devices[idx].bDeviceIsConnected && s_devices[idx].bPoseIsValid) {
 				QOverlay::VR::Transform t(QOverlay::VR::Conversion::ToGlmMat(s_devices[idx].mDeviceToAbsoluteTracking));
 				remaining->BeginGrab(idx, t);
+			} else if (remaining != nullptr) {
+				// Device disconnected or its pose went invalid right as two-handed mode ended —
+				// don't re-anchor onto stale/garbage pose data; just drop the grab outright so
+				// UpdateGrab() isn't fed an offset derived from an invalid device.
+				remaining->EndGrab();
+				for (auto& st : s_controllerState) {
+					if (st.grabbedOverlay == remaining) st.grabbedOverlay = nullptr;
+				}
 			}
 			s_twoHanded.overlay = nullptr;
 		}

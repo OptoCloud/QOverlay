@@ -17,6 +17,9 @@ struct SchmittTrigger {
 	bool engaged = false;
 
 	bool Update(float value, float press, float releaseFraction = 0.35f) {
+		// release = press * (1 - releaseFraction): 0.35 means the gate disengages once the
+		// value drops below 65% of the press threshold (see class comment for why this is a
+		// fraction, not a fixed margin).
 		const float release = press * (1.0f - releaseFraction);
 		engaged = engaged ? (value >= release) : (value >= press);
 		return engaged;

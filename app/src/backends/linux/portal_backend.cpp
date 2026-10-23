@@ -1,10 +1,10 @@
 #include "backends/linux/portal_backend.h"
 
+#include "log.h"
+
 #include <cstdlib>
 
 #include <QImage>
-
-#include <fmt/core.h>
 
 // SKELETON. D-Bus (xdg-desktop-portal) + PipeWire wiring is documented and stubbed; see
 // docs/LINUX_BACKENDS.md. Compiled only when this backend is selected with its deps present.
@@ -26,7 +26,7 @@ PortalSource::~PortalSource() = default;
 bool PortalSource::start() {
 	// TODO(linux): ScreenCast CreateSession/SelectSources/Start over D-Bus, then open the
 	// PipeWire node and negotiate a format. m_size comes from the negotiated stream.
-	fmt::print("PortalSource: start() is a skeleton — portal/PipeWire negotiation TODO\n");
+	LOG_WARN("PortalSource: start() is a skeleton — portal/PipeWire negotiation TODO");
 	m_started = false;
 	return m_started;
 }
@@ -82,8 +82,8 @@ QList<CaptureSurface> PortalBackend::enumerateSurfaces() {
 	// The portal picks the target via its own dialog, so we can only offer coarse choices;
 	// the concrete monitor/window is chosen when createSource() runs the portal flow.
 	QList<CaptureSurface> out;
-	out.append(CaptureSurface{ QStringLiteral("portal:monitor"), QStringLiteral("Pick a screen…"), CaptureSurface::Kind::Monitor });
-	out.append(CaptureSurface{ QStringLiteral("portal:window"),  QStringLiteral("Pick a window…"),  CaptureSurface::Kind::Window });
+	out.append(CaptureSurface{ QStringLiteral("portal:monitor"), QStringLiteral("Pick a screen…"), QString(), CaptureSurface::Kind::Monitor });
+	out.append(CaptureSurface{ QStringLiteral("portal:window"),  QStringLiteral("Pick a window…"),  QString(), CaptureSurface::Kind::Window });
 	return out;
 }
 

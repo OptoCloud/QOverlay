@@ -4,6 +4,8 @@
 #include <glm/geometric.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
+#include <limits>
+
 glm::mat4 QOverlay::VR::Math::CreateGlmMat(const glm::vec3& position) {
     return glm::mat4(
         1.0f, 0.0f, 0.0f, 0.0f,
@@ -25,7 +27,10 @@ bool QOverlay::VR::Math::IntersectRayPlane(const glm::vec3& rayOrigin, const glm
     // Calculate the dot product of the ray direction and the plane normal
     float denom = glm::dot(rayDirection, planeNormal);
 
-    // Check if the ray and plane are facing same direction
+    // Accept only rays travelling in the same general direction as the plane normal
+    // (denom > 0). Callers pass planeNormal = -overlayMat[2] (the overlay's front-facing
+    // direction), so this accepts a ray travelling from the viewer into the front face and
+    // rejects one travelling away from it or parallel to the plane.
     if (denom <= std::numeric_limits<float>::epsilon()) {
         return false;
     }

@@ -4,13 +4,13 @@
 #include "backends/windows/surface_thumbnail.h"
 #include "backends/windows/wgc_source.h"
 #include "input/desktop_input.h"
+#include "log.h"
 
 #include <array>
 #include <vector>
 
 #include <QVariantMap>
 
-#include <fmt/core.h>
 
 using QOverlay::Capture::Win::WgcBackend;
 
@@ -47,7 +47,7 @@ QImage WgcBackend::grabIcon(const QString& surfaceId, int maxDim) {
 QOverlay::Capture::ICaptureSource* WgcBackend::createSource(const QString& surfaceId, QObject* parent) {
 	const CaptureTarget* target = find(surfaceId);
 	if (target == nullptr) {
-		fmt::print("WgcBackend: createSource: unknown surface id {}\n", surfaceId.toStdString());
+		LOG_ERROR("WgcBackend: createSource: unknown surface id {}", surfaceId.toStdString());
 		return nullptr;
 	}
 

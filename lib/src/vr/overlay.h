@@ -18,7 +18,11 @@ class IOverlayScene;
 
 class Overlay : public QObject {
 	Q_OBJECT
-	Q_DISABLE_COPY(Overlay)
+
+	Overlay(const Overlay&) = delete;
+	Overlay& operator=(const Overlay&) = delete;
+	Overlay(Overlay&&) = delete;
+	Overlay& operator=(Overlay&&) = delete;
 
 	Overlay() = delete;
 public:
@@ -92,6 +96,12 @@ signals:
 	void VisibleChanged(bool visible);
 	void WidthChanged(float width);
 private:
+	// Returns the IVROverlay interface, logging once and returning nullptr if unavailable.
+	// Centralizes the "get interface or bail" boilerplate used by most methods below.
+	static vr::IVROverlay* GetOverlayOrLog();
+	// Same pattern as GetOverlayOrLog(), for the IVRSystem interface (device poses).
+	static vr::IVRSystem* GetVRSystemOrLog();
+
 	vr::VROverlayHandle_t m_handle;
 	// Owned outright (not a QObject child), so an explicit smart pointer expresses and
 	// enforces the lifetime the old raw pointer only managed by hand in the destructor.

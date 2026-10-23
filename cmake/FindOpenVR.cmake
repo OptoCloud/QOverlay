@@ -1,5 +1,4 @@
 # cmake/FindOpenVR.cmake
-cmake_minimum_required(VERSION 3.22)
 
 function(_OpenVR_find)
   include(FindPackageHandleStandardArgs)

@@ -9,8 +9,8 @@
 namespace QOverlay::VR {
 
 // Minimal scene contract the Overlay and the input raycaster depend on, so an
-// Overlay can be backed by either the QWidget path (OverlayScene) or the QML path
-// (QmlOverlayScene) interchangeably.
+// Overlay can be backed by either the QML path (QmlOverlayScene) or a desktop-capture
+// path (CaptureOverlayScene) interchangeably.
 class IOverlayScene {
 public:
 	virtual ~IOverlayScene() = default;
