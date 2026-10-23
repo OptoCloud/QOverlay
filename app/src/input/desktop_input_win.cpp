@@ -93,7 +93,7 @@ void QOverlay::Input::TypeText(const QString& text) {
 }
 
 void QOverlay::Input::KeyEvent(Qt::Key key, bool down) {
-	if (const WORD vk = QtKeyToVk(key); vk != 0) {
+	if (const WORD vk = Win::QtKeyToVk(key); vk != 0) {
 		SendVirtualKey(vk, down);
 	}
 }

@@ -1,5 +1,5 @@
 ﻿{
-  "version": 3,
+  "version": 6,
   "configurePresets": [
     {
       "name": "windows-base",
@@ -89,6 +89,47 @@
       "inherits": "linux-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "x64-debug",
+      "configurePreset": "x64-debug"
+    },
+    {
+      "name": "x64-release",
+      "configurePreset": "x64-release"
+    },
+    {
+      "name": "x86-debug",
+      "configurePreset": "x86-debug"
+    },
+    {
+      "name": "x86-release",
+      "configurePreset": "x86-release"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "x64-release",
+      "displayName": "x64 Release MSI (WiX)",
+      "configurePreset": "x64-release",
+      "generators": [
+        "WIX"
+      ],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
       }
     }
   ]

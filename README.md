@@ -94,20 +94,38 @@ cmake --build out/build/x64-debug
 
 Available presets: `x64-debug`, `x64-release`, `x86-debug`, `x86-release`.
 
-To build a Windows installer (`.msi`) instead of just running the built exe in place, build
-a release preset then package it with CPack (requires the [WiX Toolset v5](https://wixtoolset.org/)
-installed and on `PATH`):
+To build a Windows installer (`.msi`) instead of just running the built exe in place, you
+need the [WiX Toolset](https://wixtoolset.org/) v4 or v5 as a .NET global tool, plus its UI
+extension (one-time setup; WiX v6+ requires accepting a paid Open Source Maintenance Fee EULA,
+so stay on v5):
+
+```bat
+dotnet tool install --global wix --version 5.0.2
+wix extension add --global WixToolset.UI.wixext/5.0.2
+```
+
+Then build the release preset and package it (from a Visual Studio developer prompt, so
+`cl.exe` and `ninja` are on `PATH`):
 
 ```bat
 cmake --preset x64-release
-cmake --build out/build/x64-release --config Release
-cd out/build/x64-release
-cpack -G WIX
+cmake --build --preset x64-release
+cpack --preset x64-release
 ```
 
-This produces `QOverlay-<version>-win64.msi`, which installs per-user to
-`%LocalAppData%\Programs\QOverlay` (no admin/UAC prompt required), adds a Start Menu
-shortcut, and registers an uninstall entry under "Apps & Features".
+This produces `out/build/x64-release/QOverlay-<version>-win64.msi`. The installer:
+
+- installs per-user to `%LocalAppData%\Programs\QOverlay` (no admin/UAC prompt required),
+  with the exe and everything it needs under `bin\`;
+- bundles the Qt runtime, the QML modules the UI imports, `openvr_api.dll` and the MSVC C++
+  runtime, so it runs on a machine with neither Qt nor the VC++ Redistributable installed;
+- adds a **QOverlay** Start Menu shortcut and an uninstall entry under "Apps & Features";
+- upgrades an older installed version in place (the upgrade GUID is pinned in the top-level
+  `CMakeLists.txt` and must never change).
+
+Only the runtime component is packaged. QOverlayLib's headers, import library and CMake
+package files are the `Development` component, which `cmake --install` still installs but
+the MSI leaves out.
 
 **Windows SmartScreen warning:** QOverlay isn't signed with a commercial code-signing
 certificate (this is a small, friends/community-distributed project with no code-signing

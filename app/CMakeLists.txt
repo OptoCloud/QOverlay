@@ -260,43 +260,60 @@ if (WIN32)
         set(WINDEPLOYQT_MODE "--release")
     endif()
 
+    # --qmldir makes windeployqt scan our QML for imports and deploy the matching QML
+    # modules (qml/QtQuick/...), not just the Qt DLLs the exe links. Without it the app only
+    # runs on machines where the Qt install prefix baked into the DLLs exists.
     add_custom_command(TARGET ${project} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
             ${WINDEPLOYQT_MODE}
             --no-translations
             --no-opengl-sw
+            --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml"
             "$<TARGET_FILE:${project}>"
+            "$<TARGET_FILE:QOverlayLib>"
             COMMENT "Deploying Qt runtime libraries..."
     )
 endif()
 
 # ── Install rules (for `cmake --install` / CPack packaging) ────────────────────────────────
 # Mirrors the POST_BUILD copy list above, but into a real install tree rather than the build
-# output directory, so packaging isn't coupled to build-tree layout.
+# output directory, so packaging isn't coupled to build-tree layout. Everything here is the
+# "Runtime" CPack component (see the top-level CMakeLists for the component split).
 include(GNUInstallDirs)
 
 install(TARGETS ${project}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
 )
-install(DIRECTORY bindings/ DESTINATION ${CMAKE_INSTALL_BINDIR}/bindings)
-install(DIRECTORY qml/      DESTINATION ${CMAKE_INSTALL_BINDIR}/qml)
-install(FILES qoverlay.vrmanifest DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY bindings/ DESTINATION ${CMAKE_INSTALL_BINDIR}/bindings COMPONENT Runtime)
+install(DIRECTORY qml/      DESTINATION ${CMAKE_INSTALL_BINDIR}/qml      COMPONENT Runtime)
+install(FILES qoverlay.vrmanifest DESTINATION ${CMAKE_INSTALL_BINDIR}    COMPONENT Runtime)
 
 if (WIN32)
-    install(FILES "${_openvr_dll}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${_openvr_dll}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
 
     # Deploy the Qt runtime against the staged install tree (not the build tree), so a
-    # packaged install is self-contained independent of whichever machine built it.
+    # packaged install is self-contained independent of whichever machine built it. Runs
+    # windeployqt over both the exe and QOverlayLib.dll (it has its own Qt deps), with
+    # --qmldir so the QML modules our scenes import are included. Failure aborts the
+    # install rather than silently producing a package that can't start.
     install(CODE "
-        execute_process(COMMAND \"${WINDEPLOYQT_EXECUTABLE}\"
-            ${WINDEPLOYQT_MODE}
-            --no-translations
-            --no-opengl-sw
-            \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/$<TARGET_FILE_NAME:${project}>\"
+        message(STATUS \"Running windeployqt on the install tree...\")
+        execute_process(
+            COMMAND \"${WINDEPLOYQT_EXECUTABLE}\"
+                ${WINDEPLOYQT_MODE}
+                --no-translations
+                --no-opengl-sw
+                --qmldir \"${CMAKE_CURRENT_SOURCE_DIR}/qml\"
+                \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/$<TARGET_FILE_NAME:${project}>\"
+                \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/$<TARGET_FILE_NAME:QOverlayLib>\"
+            RESULT_VARIABLE _windeployqt_result
         )
-    ")
+        if (NOT _windeployqt_result EQUAL 0)
+            message(FATAL_ERROR \"windeployqt failed (exit code \${_windeployqt_result})\")
+        endif ()
+    " COMPONENT Runtime)
 else ()
-    install(FILES $<TARGET_FILE:OpenVR::OpenVR> DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES $<TARGET_FILE:OpenVR::OpenVR> DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
 endif ()
 
 # ── Keyboard tester tool (Windows) ──────────────────────────────────────────────────────────

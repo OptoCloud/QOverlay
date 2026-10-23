@@ -101,20 +101,24 @@ set_target_properties(QOverlayLib PROPERTIES
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+# The DLL/.so is part of the app's "Runtime" CPack component (it ships in the MSI); the
+# import lib, headers and CMake package files are "Development" (cmake --install only).
 install(TARGETS QOverlayLib
     EXPORT QOverlayLibTargets
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
 )
 install(DIRECTORY src/
     DESTINATION include/qoverlaylib
+    COMPONENT Development
     FILES_MATCHING PATTERN "*.h"
 )
 install(EXPORT QOverlayLibTargets
     FILE QOverlayLibTargets.cmake
     NAMESPACE QOverlay::
     DESTINATION lib/cmake/QOverlayLib
+    COMPONENT Development
 )
 
 configure_package_config_file(
@@ -131,12 +135,14 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/QOverlayLibConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/QOverlayLibConfigVersion.cmake
     DESTINATION lib/cmake/QOverlayLib
+    COMPONENT Development
 )
 # FindOpenVR.cmake is a MODULE-mode find (no upstream CONFIG package for OpenVR), so
 # consumers need it in their own CMAKE_MODULE_PATH too - installed alongside the
 # generated config files, which add this directory to CMAKE_MODULE_PATH themselves.
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FindOpenVR.cmake
     DESTINATION lib/cmake/QOverlayLib
+    COMPONENT Development
 )
 
 # Windows: OpenVR::OpenVR is an UNKNOWN IMPORTED target pointing at the .lib; the
